@@ -1,0 +1,23 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SJBIS data files
+*.db
+*.db-wal
+*.db-shm
+
+# Daemon pid/logs
+/tmp/sjbis-*.log
