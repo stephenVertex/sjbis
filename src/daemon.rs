@@ -7,9 +7,11 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -47,6 +49,7 @@ pub async fn run_daemon(
         db_path,
         broadcaster: Broadcaster::new(),
         router: Arc::new(router),
+        waiters: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = Router::new()
@@ -58,6 +61,7 @@ pub async fn run_daemon(
         .route("/list", get(list))
         .route("/history", get(history))
         .route("/events", get(events))
+        .route("/wait/{id}", get(wait_for_answer))
         .route("/rules", post(create_rule))
         .route("/rules/{id}", delete(delete_rule))
         .route("/agents", get(list_agents).post(register_agent))

@@ -4,6 +4,7 @@ mod db;
 mod handlers;
 mod models;
 mod router;
+mod rules;
 mod sse;
 
 use anyhow::{Context, Result};
@@ -141,34 +142,17 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
 }
 
 async fn wait_for_answer(client: &reqwest::Client, url: &str, id: &str) -> Result<AnswerEnvelope> {
-    // Long-poll by checking every 500ms
-    loop {
-        let resp = client
-            .get(format!("{}/list", url))
-            .send()
-            .await?;
-        let notifs: Vec<Notification> = resp.json().await?;
-        if let Some(n) = notifs.iter().find(|n| n.id == id) {
-            if n.status == NotificationStatus::Answered || n.status == NotificationStatus::TimedOut {
-                // Re-fetch via state to get full answer
-                let resp = client.get(format!("{}/state", url)).send().await?;
-                let state: DashboardState = resp.json().await?;
-                if let Some(h) = state.history.iter().find(|h| h.id == id) {
-                    return Ok(AnswerEnvelope {
-                        id: id.to_string(),
-                        answer: h.answer.clone(),
-                        answer_label: h.answer_label.clone(),
-                        answered_at: h.answered_at,
-                        latency_ms: None,
-                        renderer: h.question_type.to_string(),
-                        src: h.src.clone(),
-                        via: "dashboard".to_string(),
-                    });
-                }
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Use the server's blocking wait endpoint
+    let resp = client
+        .get(format!("{}/wait/{}", url, id))
+        .timeout(std::time::Duration::from_secs(360))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("wait failed: {}", resp.text().await.unwrap_or_default());
     }
+    let envelope: AnswerEnvelope = resp.json().await?;
+    Ok(envelope)
 }
 
 async fn cmd_list(json: bool) -> Result<()> {

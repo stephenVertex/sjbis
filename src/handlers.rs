@@ -1,6 +1,7 @@
 use crate::db::Db;
 use crate::models::*;
 use crate::router::AiRouter;
+use crate::rules;
 use crate::sse::Broadcaster;
 use axum::{
     extract::{Path, Query, State},
@@ -13,14 +14,19 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+
+/// In-memory waiters for blocking callers
+pub type Waiters = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<AnswerEnvelope>>>>;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db_path: PathBuf,
     pub broadcaster: Broadcaster,
     pub router: Arc<Option<AiRouter>>,
+    pub waiters: Waiters,
 }
 
 impl AppState {
@@ -177,6 +183,38 @@ pub async fn ask(
         }
     }
 
+    // Load and evaluate rules
+    let db_rules = db.list_rules().map_err(db_err)?;
+    let (mut notification, auto_answer) = rules::evaluate(&db_rules, notification);
+
+    if let Some(answer) = auto_answer {
+        // Auto-answer: store and broadcast immediately
+        let now = Utc::now();
+        db.answer_notification(&notification.id, &answer, Some(&answer)).map_err(db_err)?;
+        notification.status = NotificationStatus::Answered;
+        notification.answer = Some(answer.clone());
+        notification.answered_at = Some(now);
+
+        let envelope = AnswerEnvelope {
+            id: notification.id.clone(),
+            answer: Some(answer.clone()),
+            answer_label: Some(answer.clone()),
+            answered_at: Some(now),
+            latency_ms: Some(0),
+            renderer: notification.question_type.to_string(),
+            src: notification.src.clone(),
+            via: "rule_auto_answer".to_string(),
+        };
+        state.broadcaster.broadcast(&SseEvent::NotificationAnswered { envelope });
+        return Ok(Json(notification));
+    }
+
+    if notification.status == NotificationStatus::Muted {
+        db.insert_notification(&notification).map_err(db_err)?;
+        // Don't broadcast muted notifications
+        return Ok(Json(notification));
+    }
+
     db.insert_notification(&notification).map_err(db_err)?;
 
     // Broadcast to all SSE clients
@@ -221,11 +259,19 @@ pub async fn answer(
         via: req.via.unwrap_or_else(|| "dashboard".to_string()),
     };
 
+    // Notify any blocking waiters
+    {
+        let mut waiters = state.waiters.lock().await;
+        if let Some(tx) = waiters.remove(&id) {
+            let _ = tx.send(envelope.clone());
+        }
+    }
+
     // Broadcast
     state.broadcaster.broadcast(&SseEvent::NotificationAnswered { envelope: envelope.clone() });
 
-    // Deliver response back to caller
-    tokio::spawn(deliver_response(updated.clone(), req.answer.clone()));
+    // Deliver response back to caller (webhook, file, etc.)
+    tokio::spawn(deliver_response(updated.clone(), req.answer.clone(), envelope.clone()));
 
     Ok(Json(envelope))
 }
@@ -345,11 +391,77 @@ pub async fn register_agent(
     Ok(Json(agent))
 }
 
+/// GET /wait/{id} — blocking wait for an answer
+pub async fn wait_for_answer(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
+    // First check if already answered
+    let db = state.db().map_err(db_err)?;
+    if let Ok(Some(notif)) = db.get_notification(&id) {
+        if notif.status == NotificationStatus::Answered {
+            let envelope = AnswerEnvelope {
+                id: id.clone(),
+                answer: notif.answer.clone(),
+                answer_label: notif.answer_label.clone(),
+                answered_at: notif.answered_at,
+                latency_ms: notif.answered_at.map(|at| at.signed_duration_since(notif.created_at).num_milliseconds()),
+                renderer: notif.question_type.to_string(),
+                src: notif.src.clone(),
+                via: "dashboard".to_string(),
+            };
+            return Ok(Json(envelope));
+        }
+    }
+
+    // Set up a oneshot waiter
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        let mut waiters = state.waiters.lock().await;
+        waiters.insert(id.clone(), tx);
+    }
+
+    // Wait with a timeout (default 5 minutes)
+    match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+        Ok(Ok(envelope)) => Ok(Json(envelope)),
+        Ok(Err(_)) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "waiter cancelled"})))),
+        Err(_) => {
+            // Timeout: clean up waiter
+            let mut waiters = state.waiters.lock().await;
+            waiters.remove(&id);
+            Err((StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({"error": "timeout waiting for answer"}))))
+        }
+    }
+}
+
 /// Background task: deliver response back to caller
-async fn deliver_response(_notif: Notification, _answer: String) {
-    // TODO: implement webhook POST, file write, exit-code signal
-    // For now, the blocking/long-poll path is handled via SSE + the /answer/:id response
-    tracing::info!("would deliver answer for {} via {:?}", _notif.id, _notif.reply_to);
+async fn deliver_response(notif: Notification, answer: String, envelope: AnswerEnvelope) {
+    match notif.reply_to {
+        ReplyTo::Webhook { url } => {
+            let client = reqwest::Client::new();
+            match client.post(&url).json(&envelope).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::info!("webhook delivered to {} for {}", url, notif.id);
+                }
+                Ok(resp) => {
+                    tracing::warn!("webhook failed for {}: status {}", notif.id, resp.status());
+                }
+                Err(e) => {
+                    tracing::warn!("webhook error for {}: {}", notif.id, e);
+                }
+            }
+        }
+        ReplyTo::File { path } => {
+            match tokio::fs::write(&path, serde_json::to_string_pretty(&envelope).unwrap_or_default()).await {
+                Ok(_) => tracing::info!("file written to {} for {}", path, notif.id),
+                Err(e) => tracing::warn!("file write error for {}: {}", notif.id, e),
+            }
+        }
+        ReplyTo::Stdout | ReplyTo::ExitCode => {
+            // Blocking callers use the /wait/{id} endpoint or CLI long-poll
+            tracing::info!("answer for {} ready for blocking caller", notif.id);
+        }
+    }
 }
 
 #[derive(Deserialize)]
