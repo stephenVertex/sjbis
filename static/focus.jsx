@@ -100,9 +100,9 @@ function YesNoRenderer({ n, onAnswer }) {
   // {label, text, k} or null. k disambiguates Yes vs No when both share a key.
   const startEdit = (label) => setEditing({ label, text: label, k: label });
   useFocusKeys([
-    { match: (e) => !editing && (e.key.toLowerCase() === 'y' || e.key === 'Enter'),
+    { match: (e) => !editing && (e.key === 'y' && !e.shiftKey || e.key === 'Enter'),
       fn: () => onAnswer(n.yesLabel || 'Yes') },
-    { match: (e) => !editing && e.key.toLowerCase() === 'n',
+    { match: (e) => !editing && e.key === 'n' && !e.shiftKey,
       fn: () => onAnswer(n.noLabel || 'No') },
     { match: (e) => !!editing && e.key === 'Escape',
       fn: () => setEditing(null) },
@@ -301,9 +301,9 @@ function NumericRenderer({ n, onAnswer }) {
   const trackRef = React.useRef(null);
   const dragging = React.useRef(false);
   useFocusKeys([
-    { match: (e) => e.key === 'ArrowRight' || e.key === '+' || e.key === '=' || e.key.toLowerCase() === 'l' || e.key.toLowerCase() === 'j',
+    { match: (e) => e.key === 'ArrowRight' || e.key === '+' || e.key === '=' || e.key === 'l' && !e.shiftKey || e.key === 'j' && !e.shiftKey,
       fn: () => setV((x) => Math.min(n.max, x + n.step)) },
-    { match: (e) => e.key === 'ArrowLeft' || e.key === '-' || e.key === '_' || e.key.toLowerCase() === 'h' || e.key.toLowerCase() === 'k',
+    { match: (e) => e.key === 'ArrowLeft' || e.key === '-' || e.key === '_' || e.key === 'h' && !e.shiftKey || e.key === 'k' && !e.shiftKey,
       fn: () => setV((x) => Math.max(n.min, x - n.step)) },
     { match: (e) => e.key === 'Enter',
       fn: () => onAnswer(`${v} ${n.unit}`) },
@@ -396,9 +396,9 @@ function FileRenderer({ n, onAnswer }) {
 
 function DiffRenderer({ n, onAnswer }) {
   useFocusKeys([
-    { match: (e) => (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) || e.key.toLowerCase() === 'a',
+    { match: (e) => (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) || e.key === 'a' && !e.shiftKey,
       fn: () => onAnswer('Approved') },
-    { match: (e) => e.key.toLowerCase() === 'r',
+    { match: (e) => e.key === 'r' && !e.shiftKey,
       fn: () => onAnswer('Rejected') },
   ], [n, onAnswer]);
   const lines = n.diff || [];
@@ -450,9 +450,9 @@ function PicklistRenderer({ n, onAnswer }) {
     !q || (i.title + ' ' + i.meta).toLowerCase().includes(q.toLowerCase()));
   React.useEffect(() => { if (cursor >= items.length) setCursor(Math.max(0, items.length - 1)); }, [items.length, cursor]);
   useFocusKeys([
-    { match: (e) => e.key.toLowerCase() === 'j' && !document.activeElement?.matches('input,textarea'),
+    { match: (e) => e.key === 'j' && !e.shiftKey && !document.activeElement?.matches('input,textarea'),
       fn: () => setCursor((c) => Math.min(items.length - 1, c + 1)) },
-    { match: (e) => e.key.toLowerCase() === 'k' && !document.activeElement?.matches('input,textarea'),
+    { match: (e) => e.key === 'k' && !e.shiftKey && !document.activeElement?.matches('input,textarea'),
       fn: () => setCursor((c) => Math.max(0, c - 1)) },
     { match: (e) => e.key === 'ArrowDown', fn: () => setCursor((c) => Math.min(items.length - 1, c + 1)) },
     { match: (e) => e.key === 'ArrowUp',   fn: () => setCursor((c) => Math.max(0, c - 1)) },
@@ -667,14 +667,14 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
   React.useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') { if (snoozing) { setSnoozing(false); } else { onClose(); } }
-      if (!snoozing && e.key.toLowerCase() === 's') {
+      if (!snoozing && e.key === 's' && !e.shiftKey) {
         // Don't trigger snooze if typing in an input/textarea
         const tag = e.target?.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
         e.preventDefault();
         setSnoozing(true);
       }
-      if (e.key.toLowerCase() === 'n' && !e.target?.matches('input,textarea')) {
+      if (e.key === 'N' && !e.target?.matches('input,textarea')) {
         e.preventDefault();
         setShowNote((v) => !v);
       }
@@ -733,12 +733,12 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
                 />
                 <div className="note-meta">
                   <span>{note.length} chars</span>
-                  <button className="note-close" onClick={() => setShowNote(false)}>Hide note <span className="k">N</span></button>
+                  <button className="note-close" onClick={() => setShowNote(false)}>Hide note <span className="k">⇧N</span></button>
                 </div>
               </>
             ) : (
               <button className="note-toggle" onClick={() => setShowNote(true)}>
-                <span>✎</span> Add note <span className="k">N</span>
+                <span>✎</span> Add note <span className="k">⇧N</span>
               </button>
             )}
           </div>
