@@ -141,6 +141,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         agent_name: args.agent_name.clone(),
         instance: args.instance.clone(),
         detail: args.detail.as_ref().map(|d| unescape(d)),
+        detail_markdown: args.detail_markdown.as_ref().map(|d| unescape(d)),
         urgency: args.urgency,
         blocking: args.blocking,
         deadline: args.deadline.clone(),
@@ -464,6 +465,9 @@ FORMATTING
     \\n  New line
     \\t  Tab
     \\\\  Literal backslash
+
+  --detail-markdown renders rich text (bold **text**, italic *text*,
+  lists - item, links [text](url), code `inline`, headings ### h3).
 
   Example:
     sjbis ask --question "Deploy?" --detail "Context:\\n- Staging passed\\n- Prod is idle" \\n      --yesno --agent-name deploybot

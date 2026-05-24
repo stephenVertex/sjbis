@@ -103,6 +103,9 @@ pub struct AskArgs {
     /// Extra context paragraph
     #[arg(long)]
     pub detail: Option<String>,
+    /// Extra context as markdown (renders bold, lists, links, etc.)
+    #[arg(long)]
+    pub detail_markdown: Option<String>,
     /// Answer shape: yes/no
     #[arg(long)]
     pub yesno: bool,

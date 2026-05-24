@@ -119,6 +119,8 @@ pub struct Notification {
     pub question: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_markdown: Option<String>,
     pub question_type: QuestionType,
     pub urgency: i32, // 0..5
     pub blocking: bool,
@@ -247,6 +249,8 @@ pub struct AskRequest {
     pub instance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_markdown: Option<String>,
     #[serde(default)]
     pub urgency: i32,
     #[serde(default)]

@@ -10,7 +10,7 @@ pub struct Db {
 
 // Explicit column list to avoid PostgreSQL "cached plan must not change result type"
 // errors when columns are added via migrations.
-const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note";
+const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note";
 
 impl Db {
     pub async fn connect(dsn: &str) -> Result<Self> {
@@ -36,15 +36,15 @@ impl Db {
 
         sqlx::query(
             r#"INSERT INTO notifications (
-                id, agent_name, instance, sender, src, question, detail,
+                id, agent_name, instance, sender, src, question, detail, detail_markdown,
                 question_type, urgency, blocking, deadline, reply_to, status,
                 created_at, answered_at, answer, answer_label,
                 choices, yes_label, no_label, placeholder, suggestions,
                 min, max, step, default_value, unit, accept, diff, ack_label,
                 items, slots, mute_key, caller_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                      $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
-                      $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)"#,
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                      $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
+                      $27, $28, $29, $30, $31, $32, $33, $34, $35)"#,
         )
         .bind(&n.id)
         .bind(&n.agent_name)
@@ -53,6 +53,7 @@ impl Db {
         .bind(&n.src)
         .bind(&n.question)
         .bind(&n.detail)
+        .bind(&n.detail_markdown)
         .bind(n.question_type.to_string())
         .bind(n.urgency)
         .bind(n.blocking)
@@ -347,6 +348,7 @@ impl Db {
             src: row.try_get("src")?,
             question: row.try_get("question")?,
             detail: row.try_get("detail")?,
+            detail_markdown: row.try_get("detail_markdown")?,
             question_type: question_type.parse().unwrap_or(QuestionType::Ack),
             urgency: row.try_get("urgency")?,
             blocking: row.try_get("blocking")?,

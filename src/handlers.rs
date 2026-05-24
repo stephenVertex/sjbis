@@ -133,6 +133,7 @@ pub async fn ask(
         src,
         question: req.question.clone(),
         detail: req.detail.clone(),
+        detail_markdown: req.detail_markdown.clone(),
         question_type,
         urgency: req.urgency,
         blocking: req.blocking,

@@ -47,6 +47,108 @@ function normalizeNotif(n) {
   };
 }
 
+// Simple markdown-to-JSX converter (bold, italic, links, lists, headings, line breaks)
+function renderMarkdown(text) {
+  if (!text) return null;
+  const lines = text.split('\n');
+  const elements = [];
+  let listItems = [];
+  let key = 0;
+
+  function flushList() {
+    if (listItems.length) {
+      elements.push(<ul key={`ul-${key++}`} className="md-list">{listItems}</ul>);
+      listItems = [];
+    }
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+
+    // Empty line
+    if (!line.trim()) {
+      flushList();
+      continue;
+    }
+
+    // Heading
+    const headingMatch = line.match(/^(#{1,3})\s+(.*)$/);
+    if (headingMatch) {
+      flushList();
+      const level = headingMatch[1].length;
+      const Tag = `h${level + 2}`; // h3, h4, h5
+      elements.push(<Tag key={`h-${key++}`} className={`md-h${level}`}>{parseInline(headingMatch[2])}</Tag>);
+      continue;
+    }
+
+    // List item
+    const listMatch = line.match(/^[-*]\s+(.*)$/);
+    if (listMatch) {
+      listItems.push(<li key={`li-${key++}`}>{parseInline(listMatch[1])}</li>);
+      continue;
+    }
+
+    flushList();
+
+    // Paragraph
+    elements.push(<p key={`p-${key++}`} className="md-p">{parseInline(line)}</p>);
+  }
+
+  flushList();
+
+  return <div className="md-detail">{elements}</div>;
+}
+
+function parseInline(text) {
+  // Parse **bold**, *italic*, [link](url), `code`
+  const parts = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining) {
+    // Bold
+    const boldMatch = remaining.match(/^(.*?)\*\*(.*?)\*\*(.*)$/);
+    if (boldMatch) {
+      if (boldMatch[1]) parts.push(<span key={`s-${key++}`}>{boldMatch[1]}</span>);
+      parts.push(<strong key={`b-${key++}`}>{boldMatch[2]}</strong>);
+      remaining = boldMatch[3];
+      continue;
+    }
+
+    // Italic
+    const italicMatch = remaining.match(/^(.*?)\*(.*?)\*(.*)$/);
+    if (italicMatch) {
+      if (italicMatch[1]) parts.push(<span key={`s-${key++}`}>{italicMatch[1]}</span>);
+      parts.push(<em key={`i-${key++}`}>{italicMatch[2]}</em>);
+      remaining = italicMatch[3];
+      continue;
+    }
+
+    // Link
+    const linkMatch = remaining.match(/^(.*?)\[(.*?)\]\((.*?)\)(.*)$/);
+    if (linkMatch) {
+      if (linkMatch[1]) parts.push(<span key={`s-${key++}`}>{linkMatch[1]}</span>);
+      parts.push(<a key={`a-${key++}`} href={linkMatch[3]} target="_blank" rel="noopener noreferrer">{linkMatch[2]}</a>);
+      remaining = linkMatch[4];
+      continue;
+    }
+
+    // Code
+    const codeMatch = remaining.match(/^(.*?)`(.*?)`(.*)$/);
+    if (codeMatch) {
+      if (codeMatch[1]) parts.push(<span key={`s-${key++}`}>{codeMatch[1]}</span>);
+      parts.push(<code key={`c-${key++}`} className="md-code">{codeMatch[2]}</code>);
+      remaining = codeMatch[3];
+      continue;
+    }
+
+    parts.push(<span key={`s-${key++}`}>{remaining}</span>);
+    break;
+  }
+
+  return <>{parts}</>;
+}
+
 // ── Countdown widget ────────────────────────────────────────────────────
 function Countdown({ ms, urgent }) {
   const [remain, setRemain] = React.useState(ms);
@@ -716,7 +818,11 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
         </div>
         <div className="focus-body">
           <h2 className="focus-q">{nn.question}</h2>
-          {nn.detail && (
+          {nn.detail_markdown ? (
+            <div className="focus-detail-markdown">
+              {renderMarkdown(nn.detail_markdown)}
+            </div>
+          ) : nn.detail ? (
             <p className="focus-detail">
               {nn.detail.split('\n').map((line, i, arr) => (
                 <React.Fragment key={i}>
@@ -725,7 +831,7 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
                 </React.Fragment>
               ))}
             </p>
-          )}
+          ) : null}
           <Renderer n={nn} onAnswer={handleAnswer} />
           <div className="note-composer">
             {showNote ? (
