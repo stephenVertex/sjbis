@@ -717,8 +717,13 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
         <div className="focus-body">
           <h2 className="focus-q">{nn.question}</h2>
           {nn.detail && (
-            <p className="focus-detail" style={{whiteSpace: 'pre-wrap'}}>
-              {nn.detail}
+            <p className="focus-detail">
+              {nn.detail.split('\n').map((line, i, arr) => (
+                <React.Fragment key={i}>
+                  {line}
+                  {i < arr.length - 1 && <br />}
+                </React.Fragment>
+              ))}
             </p>
           )}
           <Renderer n={nn} onAnswer={handleAnswer} />
