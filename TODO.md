@@ -12,6 +12,10 @@
   - [x] Phase 1: JXA (JavaScript for Automation) message fetcher with JSON parsing
   - [x] Phase 2: AppleScript/JXA reply sending back to iMessage contacts
   - [ ] Phase 1: macOS NSDistributedNotificationCenter observer (deferred — JXA poller works)
-  - [ ] Phase 2: End-to-end test with real Messages (blocked on Automation permission)
+  - [ ] Phase 2: End-to-end test with real Messages (waiting for user to grant Full Disk Access)
   - Core challenge: deduplication logic (same text shouldn't spawn 5 questions)
   - Core challenge: filtering heuristic (only surface actual questions, not "on my way" or "lol")
+- [x] Add sjbis status <id> command to check notification state after blocking timeout
+- [x] Support escape sequences (\n, \t) in --detail and --question
+- [x] Support multi-line detail rendering with <br> tags
+- [x] Add --detail-markdown flag with rich text rendering (bold, italic, lists, links, code)
