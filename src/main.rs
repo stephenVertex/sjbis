@@ -11,6 +11,30 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use models::*;
 
+/// Unescape common escape sequences in a string (\\n → newline, \\t → tab, etc.)
+fn unescape(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('r') => result.push('\r'),
+                Some('\\') => result.push('\\'),
+                Some(other) => {
+                    result.push('\\');
+                    result.push(other);
+                }
+                None => result.push('\\'),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Generate a synthetic diff preview from detail + question text when no
 /// explicit diff is provided. Produces a few context / add / del lines.
 fn generate_synthetic_diff(detail: &Option<String>, question: &str) -> Vec<DiffLine> {
@@ -113,10 +137,10 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
     };
 
     let req = AskRequest {
-        question: args.question.clone(),
+        question: unescape(&args.question),
         agent_name: args.agent_name.clone(),
         instance: args.instance.clone(),
-        detail: args.detail.clone(),
+        detail: args.detail.as_ref().map(|d| unescape(d)),
         urgency: args.urgency,
         blocking: args.blocking,
         deadline: args.deadline.clone(),
@@ -434,6 +458,15 @@ COMMON FLAGS
   --reply-to        stdout | webhook:URL | file:PATH | exit-code
   --id <key>        Idempotency key. Same key within 24h = dedupe.
   --json            Output raw JSON.
+
+FORMATTING
+  --question and --detail support escape sequences:
+    \\n  New line
+    \\t  Tab
+    \\\\  Literal backslash
+
+  Example:
+    sjbis ask --question "Deploy?" --detail "Context:\\n- Staging passed\\n- Prod is idle" \\n      --yesno --agent-name deploybot
 
 EXAMPLES
   # Security alert
