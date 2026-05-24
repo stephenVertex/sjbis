@@ -7,7 +7,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "palette": "lime",
   "showConnections": true,
   "compactRail": false,
-  "textRail": false,
+  "textRail": true,
   "incomingDemo": true
 }/*EDITMODE-END*/;
 
