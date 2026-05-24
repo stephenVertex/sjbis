@@ -371,6 +371,14 @@ POSTING A QUESTION (synchronous / blocking)
   The answer is printed to stdout when it arrives. Use --json for
   structured output (includes latency_ms, answer_label, etc.).
 
+READING THE ANSWER
+  Always check the `note` field in the response. Humans can attach a
+  free-text note to any answer type — it may contain a follow-up
+  question, rejection reason, or extra context you need to act on.
+
+  Example response:
+    {"answer":"No","note":"I need the security scan report first"}
+
 QUESTION TYPES
   --yesno           Yes / No
   --text            Free text reply

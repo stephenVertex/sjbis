@@ -7,6 +7,7 @@
 - [x] Make keyboard shortcut indicator (`.k` / `kbd`) bigger and brighter
 - [x] Add optional custom note to answers (returned to calling agent)
 - [ ] iMessage plugin / side-script for SJBIS
-  - Poll or listen for incoming iMessages (macOS Messages app / `chat.db`)
-  - Forward relevant messages to SJBIS as `ask` notifications
-  - Needs deduplication logic and a way to identify which messages are "questions" vs noise
+  - Phase 1: macOS Notification Center observer (`com.apple.MobileSMS` distributed notifications)
+  - Phase 2: Full agent wrapper (persistent daemon, maintains state, uses `sjbis ask --blocking` to send answers back)
+  - Core challenge: deduplication logic (same text shouldn't spawn 5 questions)
+  - Core challenge: filtering heuristic (only surface actual questions, not "on my way" or "lol")
