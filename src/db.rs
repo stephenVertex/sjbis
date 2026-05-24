@@ -119,7 +119,7 @@ impl Db {
     pub async fn list_open_notifications(&self) -> Result<Vec<Notification>> {
         let now = Utc::now();
         let rows = sqlx::query(
-            &format!("SELECT {} FROM notifications WHERE status = 'open' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY urgency DESC, created_at DESC", NOTIF_COLS),
+            &format!("SELECT {} FROM notifications WHERE status = 'open' AND (snooze_until IS NULL OR snooze_until <= $1) AND (deadline IS NULL OR deadline > $1) ORDER BY urgency DESC, created_at DESC", NOTIF_COLS),
         )
         .bind(now)
         .fetch_all(&self.pool)
