@@ -8,6 +8,10 @@ pub struct Db {
     pool: PgPool,
 }
 
+// Explicit column list to avoid PostgreSQL "cached plan must not change result type"
+// errors when columns are added via migrations.
+const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until";
+
 impl Db {
     pub async fn connect(dsn: &str) -> Result<Self> {
         let pool = PgPool::connect(dsn).await?;
@@ -83,7 +87,7 @@ impl Db {
     }
 
     pub async fn get_notification(&self, id: &str) -> Result<Option<Notification>> {
-        let row = sqlx::query("SELECT * FROM notifications WHERE id = $1")
+        let row = sqlx::query(&format!("SELECT {} FROM notifications WHERE id = $1", NOTIF_COLS))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -99,7 +103,7 @@ impl Db {
         since: DateTime<Utc>,
     ) -> Result<Option<Notification>> {
         let row = sqlx::query(
-            "SELECT * FROM notifications WHERE caller_id = $1 AND created_at > $2 ORDER BY created_at DESC LIMIT 1",
+            &format!("SELECT {} FROM notifications WHERE caller_id = $1 AND created_at > $2 ORDER BY created_at DESC LIMIT 1", NOTIF_COLS),
         )
         .bind(caller_id)
         .bind(since)
@@ -114,7 +118,7 @@ impl Db {
     pub async fn list_open_notifications(&self) -> Result<Vec<Notification>> {
         let now = Utc::now();
         let rows = sqlx::query(
-            "SELECT * FROM notifications WHERE status = 'open' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY urgency DESC, created_at DESC",
+            &format!("SELECT {} FROM notifications WHERE status = 'open' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY urgency DESC, created_at DESC", NOTIF_COLS),
         )
         .bind(now)
         .fetch_all(&self.pool)
@@ -127,7 +131,7 @@ impl Db {
     pub async fn snooze_notification(&self, id: &str, minutes: i64) -> Result<Option<Notification>> {
         let now = Utc::now();
         let row = sqlx::query(
-            "UPDATE notifications SET snooze_until = LEAST($1 + ($2 * INTERVAL '1 minute'), COALESCE(deadline, $1 + ($2 * INTERVAL '1 minute'))) WHERE id = $3 RETURNING *"
+            &format!("UPDATE notifications SET snooze_until = LEAST($1 + ($2 * INTERVAL '1 minute'), COALESCE(deadline, $1 + ($2 * INTERVAL '1 minute'))) WHERE id = $3 RETURNING {}", NOTIF_COLS)
         )
         .bind(now)
         .bind(minutes)
@@ -142,7 +146,7 @@ impl Db {
 
     pub async fn list_history(&self, limit: usize) -> Result<Vec<Notification>> {
         let rows = sqlx::query(
-            "SELECT * FROM notifications WHERE status IN ('answered', 'timed_out') ORDER BY answered_at DESC, created_at DESC LIMIT $1",
+            &format!("SELECT {} FROM notifications WHERE status IN ('answered', 'timed_out') ORDER BY answered_at DESC, created_at DESC LIMIT $1", NOTIF_COLS),
         )
         .bind(limit as i64)
         .fetch_all(&self.pool)
@@ -191,7 +195,7 @@ impl Db {
     pub async fn timeout_notifications(&self) -> Result<Vec<Notification>> {
         let now = Utc::now();
         let rows = sqlx::query(
-            "SELECT * FROM notifications WHERE status = 'open' AND deadline IS NOT NULL AND deadline < $1",
+            &format!("SELECT {} FROM notifications WHERE status = 'open' AND deadline IS NOT NULL AND deadline < $1", NOTIF_COLS),
         )
         .bind(now)
         .fetch_all(&self.pool)
