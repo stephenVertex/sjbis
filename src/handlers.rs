@@ -161,6 +161,7 @@ pub async fn ask(
         mute_key: req.mute_key.clone(),
         caller_id: req.id.clone(),
         snooze_until: None,
+        note: None,
     };
 
     // Apply urgency from AI router if confidence is high
@@ -181,7 +182,7 @@ pub async fn ask(
     if let Some(answer) = auto_answer {
         // Auto-answer: store and broadcast immediately
         let now = Utc::now();
-        state.db.answer_notification(&notification.id, &answer, Some(&answer)).await.map_err(db_err)?;
+        state.db.answer_notification(&notification.id, &answer, Some(&answer), None).await.map_err(db_err)?;
         notification.status = NotificationStatus::Answered;
         notification.answer = Some(answer.clone());
         notification.answered_at = Some(now);
@@ -195,6 +196,7 @@ pub async fn ask(
             renderer: notification.question_type.to_string(),
             src: notification.src.clone(),
             via: "rule_auto_answer".to_string(),
+            note: None,
         };
         state.broadcaster.broadcast(&SseEvent::NotificationAnswered { envelope });
         return Ok(Json(notification));
@@ -233,7 +235,7 @@ pub async fn answer(
     let now = Utc::now();
     let latency = now.signed_duration_since(notif.created_at).num_milliseconds();
 
-    state.db.answer_notification(&id, &req.answer, req.via.as_deref().or(Some(&req.answer))).await.map_err(db_err)?;
+    state.db.answer_notification(&id, &req.answer, req.via.as_deref().or(Some(&req.answer)), req.note.as_deref()).await.map_err(db_err)?;
 
     let updated = state.db.get_notification(&id).await.unwrap_or(Some(notif.clone())).unwrap_or(notif.clone());
 
@@ -246,6 +248,7 @@ pub async fn answer(
         renderer: updated.question_type.to_string(),
         src: updated.src.clone(),
         via: req.via.unwrap_or_else(|| "dashboard".to_string()),
+        note: updated.note.clone(),
     };
 
     // Notify any blocking waiters
@@ -434,6 +437,7 @@ pub async fn wait_for_answer(
                 renderer: notif.question_type.to_string(),
                 src: notif.src.clone(),
                 via: "dashboard".to_string(),
+                note: notif.note.clone(),
             };
             return Ok(Json(envelope));
         }

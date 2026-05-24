@@ -658,6 +658,11 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
   const Renderer = RENDERERS[nn.type] || AckRenderer;
   const color = window.agentColor ? window.agentColor(nn.agent) : '#C7F33D';
   const [snoozing, setSnoozing] = React.useState(false);
+  const [note, setNote] = React.useState('');
+  const [showNote, setShowNote] = React.useState(false);
+  const noteRef = React.useRef(null);
+
+  const handleAnswer = (val) => onAnswer(val, note.trim() || null);
 
   React.useEffect(() => {
     const onKey = (e) => {
@@ -669,10 +674,18 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
         e.preventDefault();
         setSnoozing(true);
       }
+      if (e.key.toLowerCase() === 'n' && !e.target?.matches('input,textarea')) {
+        e.preventDefault();
+        setShowNote((v) => !v);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, snoozing]);
+
+  React.useEffect(() => {
+    if (showNote) noteRef.current?.focus();
+  }, [showNote]);
 
   if (snoozing) {
     return (
@@ -704,7 +717,31 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
         <div className="focus-body">
           <h2 className="focus-q">{nn.question}</h2>
           {nn.detail && <p className="focus-detail">{nn.detail}</p>}
-          <Renderer n={nn} onAnswer={onAnswer} />
+          <Renderer n={nn} onAnswer={handleAnswer} />
+          <div className="note-composer">
+            {showNote ? (
+              <>
+                <textarea
+                  ref={noteRef}
+                  className="note-area"
+                  placeholder="Optional note for the agent…"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') { e.preventDefault(); setShowNote(false); }
+                  }}
+                />
+                <div className="note-meta">
+                  <span>{note.length} chars</span>
+                  <button className="note-close" onClick={() => setShowNote(false)}>Hide note <span className="k">N</span></button>
+                </div>
+              </>
+            ) : (
+              <button className="note-toggle" onClick={() => setShowNote(true)}>
+                <span>✎</span> Add note <span className="k">N</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </>

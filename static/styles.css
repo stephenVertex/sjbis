@@ -1373,3 +1373,49 @@ button { font-family: inherit; }
 .snooze-overlay .focus-hd {
   border-bottom: 1px solid var(--hair);
 }
+
+/* ── Note composer ──────────────────────────────────────────────────────── */
+.note-composer {
+  margin-top: 16px;
+}
+.note-toggle {
+  appearance: none; border: 0; background: transparent;
+  font-family: var(--sans); font-size: 13px;
+  color: var(--ink-3); cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 0;
+}
+.note-toggle:hover { color: var(--ink-2); }
+.note-toggle span:first-child {
+  font-size: 14px;
+  opacity: 0.7;
+}
+.note-area {
+  width: 100%;
+  appearance: none; border: 0;
+  background: var(--surf);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-m);
+  padding: 12px 14px;
+  font-family: var(--sans); font-size: 14px;
+  color: var(--ink);
+  min-height: 80px;
+  resize: vertical;
+}
+.note-area:focus {
+  outline: none;
+  border-color: var(--agent, var(--lime));
+}
+.note-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 6px;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-4);
+}
+.note-close {
+  appearance: none; border: 0; background: transparent;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--ink-3); cursor: pointer;
+  display: flex; align-items: center; gap: 4px;
+}
+.note-close:hover { color: var(--ink-2); }

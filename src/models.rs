@@ -169,6 +169,8 @@ pub struct Notification {
     pub caller_id: Option<String>, // idempotency key
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snooze_until: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -195,6 +197,8 @@ pub struct AnswerEnvelope {
     pub renderer: String,
     pub src: String,
     pub via: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Rule compiled from natural language or written directly as JSON
@@ -297,6 +301,8 @@ pub struct AnswerRequest {
     pub answer: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Router response from AI

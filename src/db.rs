@@ -10,7 +10,7 @@ pub struct Db {
 
 // Explicit column list to avoid PostgreSQL "cached plan must not change result type"
 // errors when columns are added via migrations.
-const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until";
+const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note";
 
 impl Db {
     pub async fn connect(dsn: &str) -> Result<Self> {
@@ -170,14 +170,16 @@ impl Db {
         id: &str,
         answer: &str,
         answer_label: Option<&str>,
+        note: Option<&str>,
     ) -> Result<()> {
         let now = Utc::now();
         sqlx::query(
-            "UPDATE notifications SET status = 'answered', answer = $1, answer_label = $2, answered_at = $3 WHERE id = $4",
+            "UPDATE notifications SET status = 'answered', answer = $1, answer_label = $2, answered_at = $3, note = $4 WHERE id = $5",
         )
         .bind(answer)
         .bind(answer_label)
         .bind(now)
+        .bind(note)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -379,6 +381,7 @@ impl Db {
             mute_key: row.try_get("mute_key")?,
             caller_id: row.try_get("caller_id")?,
             snooze_until: row.try_get("snooze_until").ok(),
+            note: row.try_get("note").ok(),
         })
     }
 

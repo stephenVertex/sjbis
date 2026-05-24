@@ -40,11 +40,13 @@ async function apiState() {
   return r.json();
 }
 
-async function apiAnswer(id, answer, via = 'dashboard') {
+async function apiAnswer(id, answer, via = 'dashboard', note = null) {
+  const body = { answer, via };
+  if (note) body.note = note;
   const r = await fetch(`${API_BASE}/answer/${id}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answer, via }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error('failed to post answer');
   return r.json();
@@ -451,20 +453,20 @@ function App() {
     }
   }, [selectedIdx, visible]);
 
-  const onAnswer = async (val) => {
+  const onAnswer = async (val, note = null) => {
     const n = focused;
     if (!n) return;
     const isSkip = val === '(skipped)';
     try {
       if (!isSkip) {
-        await apiAnswer(n.id, typeof val === 'string' ? val : String(val), 'dashboard');
+        await apiAnswer(n.id, typeof val === 'string' ? val : String(val), 'dashboard', note);
       }
       setNotifications((prev) => prev.filter((x) => x.id !== n.id));
       if (!isSkip) {
         setHistory((prev) => [
           { id: n.id, agent_name: n.agent_name || n.agent, question: n.question,
             answer: typeof val === 'string' ? val : String(val), type: n.question_type || n.type,
-            answeredAt: new Date().toISOString() },
+            answeredAt: new Date().toISOString(), note },
           ...prev,
         ]);
       }
