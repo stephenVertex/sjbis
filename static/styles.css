@@ -715,11 +715,6 @@ button { font-family: inherit; }
   white-space: pre-wrap;
   margin-top: 8px;
 }
-.focus-detail br + br {
-  display: block;
-  content: '';
-  margin-top: 0.6em;
-}
 
 /* ── Question type renderers ───────────────────────────────────────────── */
 
