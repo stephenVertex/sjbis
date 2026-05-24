@@ -75,11 +75,23 @@ async function apiSnooze(id, minutes) {
   return r.json();
 }
 
+async function apiDismiss(id) {
+  const r = await fetch(`${API_BASE}/dismiss/${id}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.error || `failed to dismiss (${r.status})`);
+  }
+  return r.json();
+}
+
 async function apiDeleteRule(id) {
   await fetch(`${API_BASE}/rules/${id}`, { method: 'DELETE' });
 }
 
-function NotificationCard({ n, onClick, agents, selected, cardRef }) {
+function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef }) {
   const agent = agents[n.agent_name] || agents[n.agent] || { glyph: '◐', name: n.agent_name || n.agent };
   const color = window.agentColor(n.agent_name || n.agent);
   return (
@@ -91,6 +103,13 @@ function NotificationCard({ n, onClick, agents, selected, cardRef }) {
     >
       <div className="ribbon" />
       <span className="kbd-marker">↵ open</span>
+      <button
+        className="card-dismiss"
+        title="Dismiss without reply (d)"
+        onClick={(e) => { e.stopPropagation(); onDismiss(n.id); }}
+      >
+        <span className="k">d</span>
+      </button>
       <div className="card-hd">
         <div className="glyph">{agent.glyph}</div>
         <div className="meta">
@@ -327,6 +346,10 @@ function App() {
           case 'notification_cancelled':
             setNotifications((prev) => prev.filter((n) => n.id !== event.id));
             break;
+          case 'notification_dismissed':
+            setNotifications((prev) => prev.filter((n) => n.id !== event.id));
+            setFocused((f) => (f && f.id === event.id) ? null : f);
+            break;
           case 'rule_created':
             setRules((prev) => [event.rule, ...prev]);
             break;
@@ -486,6 +509,19 @@ function App() {
     }
   };
 
+  const onDismiss = async () => {
+    const n = focused;
+    if (!n) return;
+    try {
+      await apiDismiss(n.id);
+      setNotifications((prev) => prev.filter((x) => x.id !== n.id));
+      setFocused(null);
+      setBurst({ text: 'dismissed', color: 'var(--ink-3)' });
+    } catch (e) {
+      console.error('Failed to dismiss:', e);
+    }
+  };
+
   const onFilterAgent = (id) => {
     setFilterAgent((current) => current === id ? null : id);
     setSelectedIdx(0);
@@ -543,6 +579,14 @@ function App() {
                 selected={i === selectedIdx}
                 cardRef={(el) => { cardRefs.current[n.id] = el; }}
                 onClick={() => { setSelectedIdx(i); setFocused(n); }}
+                onDismiss={async (id) => {
+                  try {
+                    await apiDismiss(id);
+                    setNotifications((prev) => prev.filter((x) => x.id !== id));
+                  } catch (e) {
+                    console.error('Failed to dismiss:', e);
+                  }
+                }}
               />
             ))}
             {visible.length === 0 && (
@@ -564,7 +608,7 @@ function App() {
       </div>
 
       {focused && (
-        <window.Focus n={focused} onClose={() => setFocused(null)} onAnswer={onAnswer} onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(() => { setFocused(null); }).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })} />
+        <window.Focus n={focused} onClose={() => setFocused(null)} onAnswer={onAnswer} onDismiss={onDismiss} onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(() => { setFocused(null); }).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })} />
       )}
       {burst && <window.Burst text={burst.text} color={burst.color} onDone={() => setBurst(null)} />}
 
@@ -573,6 +617,14 @@ function App() {
           <span className="grp"><kbd>J</kbd><kbd>K</kbd> navigate</span>
           <span className="grp"><kbd>↵</kbd> open</span>
           <span className="grp"><kbd>1</kbd>–<kbd>9</kbd> answer</span>
+          <span className="grp"><kbd>esc</kbd> back</span>
+        </div>
+      )}
+      {focused && (
+        <div className="kbd-help" aria-hidden="true">
+          <span className="grp"><kbd>d</kbd> dismiss</span>
+          <span className="grp"><kbd>s</kbd> snooze</span>
+          <span className="grp"><kbd>⇧N</kbd> note</span>
           <span className="grp"><kbd>esc</kbd> back</span>
         </div>
       )}

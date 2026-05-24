@@ -187,6 +187,18 @@ impl Db {
         Ok(())
     }
 
+    pub async fn dismiss_notification(&self, id: &str) -> Result<()> {
+        let now = Utc::now();
+        sqlx::query(
+            "UPDATE notifications SET status = 'dismissed', answered_at = $1 WHERE id = $2",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn delete_notification(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM notifications WHERE id = $1")
             .bind(id)
@@ -359,6 +371,7 @@ impl Db {
                 "cancelled" => NotificationStatus::Cancelled,
                 "muted" => NotificationStatus::Muted,
                 "timed_out" => NotificationStatus::TimedOut,
+                "dismissed" => NotificationStatus::Dismissed,
                 _ => NotificationStatus::Open,
             },
             created_at,

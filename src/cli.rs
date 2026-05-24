@@ -26,6 +26,11 @@ pub enum Commands {
         /// Notification id
         id: String,
     },
+    /// Dismiss a notification by id (mark as seen without answering)
+    Dismiss {
+        /// Notification id
+        id: String,
+    },
     /// Wait for an answer to a previously-posted question
     Wait {
         /// Notification id

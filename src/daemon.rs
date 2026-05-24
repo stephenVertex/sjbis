@@ -57,6 +57,7 @@ pub async fn run_daemon(
         .route("/ask", post(ask))
         .route("/answer/{id}", post(answer))
         .route("/cancel/{id}", delete(cancel))
+        .route("/dismiss/{id}", post(dismiss))
         .route("/snooze/{id}", post(snooze))
         .route("/list", get(list))
         .route("/notification/{id}", get(get_notification))

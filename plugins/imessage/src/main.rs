@@ -280,6 +280,17 @@ async fn run_test(minutes: i64) -> Result<()> {
     }
 
     println!("\n{} of {} messages look like questions", questions_found, messages.len());
+    
+    // If no messages found, try to diagnose
+    if messages.is_empty() {
+        println!("\nNote: No messages found in the last {} minutes.", minutes);
+        println!("This could mean:");
+        println!("  1. No messages were received in this time window");
+        println!("  2. Messages were deleted from the database");
+        println!("  3. The Messages app database path changed");
+        println!("\nTry with a larger --minutes value, e.g. --minutes 1440 (24 hours)");
+    }
+    
     Ok(())
 }
 

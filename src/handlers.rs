@@ -288,6 +288,51 @@ pub async fn cancel(
     }
 }
 
+/// POST /dismiss/:id — mark as dismissed without sending a reply
+pub async fn dismiss(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
+    let notif = match state.db.get_notification(&id).await {
+        Ok(Some(n)) => n,
+        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
+        Err(e) => return Err(db_err(e)),
+    };
+
+    if notif.status != NotificationStatus::Open {
+        return Err((StatusCode::CONFLICT, Json(serde_json::json!({"error": "notification already answered, cancelled, or dismissed"}))));
+    }
+
+    let now = Utc::now();
+    let latency = now.signed_duration_since(notif.created_at).num_milliseconds();
+
+    state.db.dismiss_notification(&id).await.map_err(db_err)?;
+
+    let envelope = AnswerEnvelope {
+        id: id.clone(),
+        answer: None,
+        answer_label: None,
+        answered_at: Some(now),
+        latency_ms: Some(latency),
+        renderer: notif.question_type.to_string(),
+        src: notif.src.clone(),
+        via: "dismissed".to_string(),
+        note: None,
+    };
+
+    // Signal any blocking waiters so they return immediately
+    {
+        let mut waiters = state.waiters.lock().await;
+        if let Some(tx) = waiters.remove(&id) {
+            let _ = tx.send(envelope.clone());
+        }
+    }
+
+    state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
+
+    Ok(Json(envelope))
+}
+
 /// POST /snooze/:id — push notification back by N minutes (capped at deadline)
 #[derive(Deserialize)]
 pub struct SnoozeBody {
@@ -437,21 +482,38 @@ pub async fn wait_for_answer(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
-    // First check if already answered
+    // First check if already answered, dismissed, cancelled, or timed out
     if let Ok(Some(notif)) = state.db.get_notification(&id).await {
-        if notif.status == NotificationStatus::Answered {
-            let envelope = AnswerEnvelope {
-                id: id.clone(),
-                answer: notif.answer.clone(),
-                answer_label: notif.answer_label.clone(),
-                answered_at: notif.answered_at,
-                latency_ms: notif.answered_at.map(|at| at.signed_duration_since(notif.created_at).num_milliseconds()),
-                renderer: notif.question_type.to_string(),
-                src: notif.src.clone(),
-                via: "dashboard".to_string(),
-                note: notif.note.clone(),
-            };
-            return Ok(Json(envelope));
+        match notif.status {
+            NotificationStatus::Answered => {
+                let envelope = AnswerEnvelope {
+                    id: id.clone(),
+                    answer: notif.answer.clone(),
+                    answer_label: notif.answer_label.clone(),
+                    answered_at: notif.answered_at,
+                    latency_ms: notif.answered_at.map(|at| at.signed_duration_since(notif.created_at).num_milliseconds()),
+                    renderer: notif.question_type.to_string(),
+                    src: notif.src.clone(),
+                    via: "dashboard".to_string(),
+                    note: notif.note.clone(),
+                };
+                return Ok(Json(envelope));
+            }
+            NotificationStatus::Dismissed | NotificationStatus::Cancelled | NotificationStatus::TimedOut => {
+                let envelope = AnswerEnvelope {
+                    id: id.clone(),
+                    answer: None,
+                    answer_label: None,
+                    answered_at: notif.answered_at,
+                    latency_ms: notif.answered_at.map(|at| at.signed_duration_since(notif.created_at).num_milliseconds()),
+                    renderer: notif.question_type.to_string(),
+                    src: notif.src.clone(),
+                    via: format!("{:?}", notif.status).to_lowercase(),
+                    note: None,
+                };
+                return Ok(Json(envelope));
+            }
+            _ => {}
         }
     }
 

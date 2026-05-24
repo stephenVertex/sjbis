@@ -183,6 +183,7 @@ pub enum NotificationStatus {
     Cancelled,
     Muted,
     TimedOut,
+    Dismissed,
 }
 
 /// The envelope returned to a blocking caller or webhook
@@ -332,6 +333,7 @@ pub enum SseEvent {
     NotificationUpdated { notification: Notification },
     NotificationAnswered { envelope: AnswerEnvelope },
     NotificationCancelled { id: NotificationId },
+    NotificationDismissed { id: NotificationId, envelope: AnswerEnvelope },
     RuleCreated { rule: Rule },
     RuleUpdated { rule: Rule },
     RuleDeleted { id: String },

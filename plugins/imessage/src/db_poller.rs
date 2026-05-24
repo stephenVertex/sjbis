@@ -8,22 +8,18 @@ use crate::Message;
 fn row_to_message(row: &Row) -> rusqlite::Result<Message> {
     let rowid: i64 = row.get(0)?;
     let handle_id: i64 = row.get(1)?;
-    let text: String = row.get(2)?;
-    let date_raw: i64 = row.get(3)?;
-    let is_from_me: bool = row.get(4)?;
+    let handle_text: Option<String> = row.get(2)?;
+    let text: String = row.get(3)?;
+    let date_raw: i64 = row.get(4)?;
+    let is_from_me: bool = row.get(5)?;
 
-    // macOS Messages app uses nanoseconds since 2001-01-01
-    let date = if date_raw > 1_000_000_000_000_000_000 {
-        // Nanoseconds
-        Utc.timestamp_nanos(date_raw)
-    } else {
-        // Seconds since 2001-01-01 (Apple epoch)
-        let apple_epoch = Utc.with_ymd_and_hms(2001, 1, 1, 0, 0, 0).unwrap();
-        apple_epoch + chrono::Duration::seconds(date_raw)
-    };
+    // macOS Messages app stores nanoseconds since 2001-01-01 (Apple epoch)
+    // Apple epoch = 2001-01-01 00:00:00 UTC = 978307200 seconds since Unix epoch
+    let apple_epoch_nanos = 978307200i64 * 1_000_000_000i64;
+    let date = Utc.timestamp_nanos(apple_epoch_nanos + date_raw);
 
     // Resolve handle ID to phone/email
-    let handle = format!("handle:{}", handle_id);
+    let handle = handle_text.unwrap_or_else(|| format!("handle:{}", handle_id));
 
     Ok(Message {
         rowid,
@@ -51,15 +47,17 @@ pub async fn fetch_new_messages(since: DateTime<Utc>) -> Result<Vec<Message>> {
     let messages = tokio::task::spawn_blocking(move || {
         let conn = Connection::open(&db_path)?;
 
-        // Apple epoch offset
-        let apple_epoch = Utc.with_ymd_and_hms(2001, 1, 1, 0, 0, 0).unwrap();
-        let since_apple = (since_clone - apple_epoch).num_seconds();
+        // Apple epoch = 2001-01-01 00:00:00 UTC in nanoseconds since Unix epoch
+        let apple_epoch_nanos = 978307200i64 * 1_000_000_000i64;
+        let since_apple = since_clone.timestamp_nanos() - apple_epoch_nanos;
 
         let mut stmt = conn.prepare(
-            "SELECT message.ROWID, message.handle_id, message.text, message.date, message.is_from_me 
+            "SELECT message.ROWID, message.handle_id, COALESCE(handle.id, 'handle:' || message.handle_id), message.text, message.date, message.is_from_me 
              FROM message 
+             LEFT JOIN handle ON message.handle_id = handle.ROWID
              WHERE message.date > ? 
              AND message.text IS NOT NULL 
+             AND message.is_from_me = 0
              ORDER BY message.date ASC"
         )?;
 

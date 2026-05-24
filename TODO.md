@@ -15,6 +15,7 @@
   - [x] Daemon mode running — surfaces new iMessage questions to SJBIS dashboard in real-time
   - [ ] Phase 1: macOS NSDistributedNotificationCenter observer (deferred — JXA poller works)
   - [ ] Phase 2: Send replies back to iMessage contacts via AppleScript/JXA
+  - [ ] Add background/daemon mode so it doesn't require an open terminal window
   - Core challenge: deduplication logic (same text shouldn't spawn 5 questions)
   - Core challenge: filtering heuristic (only surface actual questions, not "on my way" or "lol")
 - [x] Add sjbis status <id> command to check notification state after blocking timeout

@@ -80,6 +80,7 @@ async fn main() -> Result<()> {
         cli::Commands::Ask(ask_args) => cmd_ask(ask_args).await,
         cli::Commands::List { json } => cmd_list(json).await,
         cli::Commands::Cancel { id } => cmd_cancel(id).await,
+        cli::Commands::Dismiss { id } => cmd_dismiss(id).await,
         cli::Commands::Wait { id } => cmd_wait(id).await,
         cli::Commands::Status { id } => cmd_status(id).await,
         cli::Commands::Rule { command } => cmd_rule(command).await,
@@ -248,6 +249,18 @@ async fn cmd_cancel(id: String) -> Result<()> {
     Ok(())
 }
 
+async fn cmd_dismiss(id: String) -> Result<()> {
+    let url = cli::daemon_url(None);
+    let client = reqwest::Client::new();
+    let resp = client.post(format!("{}/dismiss/{}", url, id)).send().await?;
+    if resp.status().is_success() {
+        println!("Dismissed {}", id);
+    } else {
+        anyhow::bail!("daemon error: {}", resp.text().await.unwrap_or_default());
+    }
+    Ok(())
+}
+
 async fn cmd_wait(id: String) -> Result<()> {
     let url = cli::daemon_url(None);
     let client = reqwest::Client::new();
@@ -268,6 +281,7 @@ async fn cmd_status(id: String) -> Result<()> {
             NotificationStatus::Cancelled => "cancelled",
             NotificationStatus::Muted => "muted",
             NotificationStatus::TimedOut => "timed_out",
+            NotificationStatus::Dismissed => "dismissed",
         };
         println!("id:        {}", notif.id);
         println!("status:    {}", status_str);
@@ -491,10 +505,11 @@ DASHBOARD
   Open http://localhost:7878 in a browser. Click cards to answer.
   Keyboard: J/K navigate, Enter open, 1-9 answer.
 
-LIST / STATUS / CANCEL
+LIST / STATUS / CANCEL / DISMISS
   sjbis list                    Show open notifications
-  sjbis status sjbis-AbCdEfGh   Check state of any notification (open/answered/cancelled/timed_out)
+  sjbis status sjbis-AbCdEfGh   Check state of any notification (open/answered/cancelled/timed_out/dismissed)
   sjbis cancel sjbis-AbCdEfGh   Cancel an open notification
+  sjbis dismiss sjbis-AbCdEfGh  Dismiss (mark as seen without answering — no reply sent)
 "#;
     println!("SJBIS — How to ask questions\n\n{}\n\n{}", status_banner, help_body);
     Ok(())

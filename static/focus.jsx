@@ -754,7 +754,7 @@ function SnoozePicker({ n, onSnooze, onClose }) {
 
 // ── Focus shell ─────────────────────────────────────────────────────────
 
-function Focus({ n, onClose, onAnswer, onSnooze }) {
+function Focus({ n, onClose, onAnswer, onDismiss, onSnooze }) {
   const nn = normalizeNotif(n);
   const agent = window.AGENTS ? (window.AGENTS[nn.agent] || { glyph: '◐', name: nn.agent }) : { glyph: '◐', name: nn.agent };
   const Renderer = RENDERERS[nn.type] || AckRenderer;
@@ -776,6 +776,12 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
         e.preventDefault();
         setSnoozing(true);
       }
+      if (e.key === 'd' && !e.shiftKey) {
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+        e.preventDefault();
+        onDismiss();
+      }
       if (e.key === 'N' && !e.target?.matches('input,textarea')) {
         e.preventDefault();
         setShowNote((v) => !v);
@@ -783,7 +789,7 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, snoozing]);
+  }, [onClose, snoozing, onDismiss]);
 
   React.useEffect(() => {
     if (showNote) noteRef.current?.focus();
@@ -833,6 +839,11 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
             </p>
           ) : null}
           <Renderer n={nn} onAnswer={handleAnswer} />
+          <div className="focus-actions">
+            <button className="dismiss-btn" onClick={onDismiss}>
+              <span className="k">d</span> Dismiss without reply
+            </button>
+          </div>
           <div className="note-composer">
             {showNote ? (
               <>
