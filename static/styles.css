@@ -191,6 +191,14 @@ button { font-family: inherit; }
 .chip.mute { background: rgba(255,179,65,0.10); border-color: rgba(255,179,65,0.25); color: var(--warm); }
 .chip.mute .x { background: rgba(255,179,65,0.15); }
 .chip.mute .x:hover { background: rgba(255,179,65,0.3); }
+.chip.expired { opacity: 0.4; border-style: dashed; }
+.chip-expiry {
+  margin-left: 6px;
+  font-size: 10px;
+  font-family: var(--mono);
+  opacity: 0.7;
+  color: var(--ink-3);
+}
 
 .clock {
   font-family: var(--mono);

@@ -428,24 +428,114 @@ pub async fn events(State(state): State<AppState>) -> Sse<impl tokio_stream::Str
 pub async fn create_rule(
     State(state): State<AppState>,
     Json(body): Json<CreateRuleBody>,
-) -> Result<Json<Rule>, (StatusCode, Json<serde_json::Value>)> {
+) -> Result<Json<Vec<Rule>>, (StatusCode, Json<serde_json::Value>)> {
+    let now = Utc::now();
+    let expires = if let Some(dur) = &body.expires_in {
+        crate::models::parse_deadline(dur).ok()
+    } else {
+        body.expires_at.clone()
+    };
+
+    let mut created = Vec::new();
+
+    // Check if this is an "allow list" pattern: "only allow X from Y for Z"
+    let lower = body.text.to_lowercase();
+    if lower.starts_with("only allow ") || lower.starts_with("allow ") {
+        let rest = if lower.starts_with("only allow ") {
+            &body.text[11..]
+        } else {
+            &body.text[6..]
+        };
+        let rest_lower = rest.to_lowercase();
+
+        if let Some(from_idx) = rest_lower.find(" from ") {
+            let agent = rest[..from_idx].trim().to_string();
+            let after_from = rest[from_idx + 6..].trim();
+
+            // Check for "for <duration>" at the end
+            let (contacts_str, duration_str) = if let Some(for_idx) = after_from.to_lowercase().rfind(" for ") {
+                (&after_from[..for_idx], Some(&after_from[for_idx + 5..]))
+            } else {
+                (after_from, None)
+            };
+
+            let contacts = crate::rules::parse_contacts(contacts_str);
+            if !contacts.is_empty() && !agent.is_empty() {
+                // Create mute-all rule (low priority)
+                let mute_rule = Rule {
+                    id: format!("r-{}", nanoid::nanoid!(6)),
+                    text: format!("mute all {} (auto-created by allow list)", agent),
+                    compiled: Some(serde_json::json!({
+                        "action": "mute",
+                        "match": { "agent": &agent }
+                    })),
+                    active: true,
+                    scope: Some(agent.clone()),
+                    urgency_min: 0,
+                    mute: true,
+                    priority: body.priority.unwrap_or(10),
+                    expires_at: duration_str.and_then(|d| crate::models::parse_deadline(d).ok()).or(expires),
+                    active_window: None,
+                    created_at: now,
+                };
+                state.db.insert_rule(&mute_rule).await.map_err(db_err)?;
+                state.broadcaster.broadcast(&SseEvent::RuleCreated { rule: mute_rule.clone() });
+                created.push(mute_rule);
+
+                // Create surface rules for each contact (high priority, overrides mute)
+                for contact in contacts {
+                    let contact_clean = contact.trim().to_string();
+                    if contact_clean.is_empty() { continue; }
+                    let surface_rule = Rule {
+                        id: format!("r-{}", nanoid::nanoid!(6)),
+                        text: format!("surface {} from {}", agent, contact_clean),
+                        compiled: Some(serde_json::json!({
+                            "action": "surface",
+                            "match": {
+                                "agent": &agent,
+                                "source_contains": [contact_clean]
+                            }
+                        })),
+                        active: true,
+                        scope: Some(agent.clone()),
+                        urgency_min: 0,
+                        mute: false,
+                        priority: body.priority.unwrap_or(20),
+                        expires_at: duration_str.and_then(|d| crate::models::parse_deadline(d).ok()).or(expires),
+                        active_window: None,
+                        created_at: now,
+                    };
+                    state.db.insert_rule(&surface_rule).await.map_err(db_err)?;
+                    state.broadcaster.broadcast(&SseEvent::RuleCreated { rule: surface_rule.clone() });
+                    created.push(surface_rule);
+                }
+
+                return Ok(Json(created));
+            }
+        }
+    }
+
+    // Single rule compilation
+    let compiled = body.compiled.clone().or_else(|| crate::rules::compile(&body.text));
+
     let rule = Rule {
         id: format!("r-{}", nanoid::nanoid!(6)),
         text: body.text.clone(),
-        compiled: body.compiled.clone(),
+        compiled,
         active: true,
         scope: body.scope.clone(),
         urgency_min: body.urgency_min.unwrap_or(0),
         mute: body.mute.unwrap_or(false),
-        expires_at: None,
+        priority: body.priority.unwrap_or(0),
+        expires_at: expires,
         active_window: None,
-        created_at: Utc::now(),
+        created_at: now,
     };
 
     state.db.insert_rule(&rule).await.map_err(db_err)?;
-
     state.broadcaster.broadcast(&SseEvent::RuleCreated { rule: rule.clone() });
-    Ok(Json(rule))
+    created.push(rule);
+    Ok(Json(created))
 }
 
 /// DELETE /rules/:id
@@ -578,4 +668,10 @@ pub struct CreateRuleBody {
     pub urgency_min: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mute: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<chrono::DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_in: Option<String>, // duration like "1h", "30m"
 }

@@ -242,9 +242,9 @@ impl Db {
 
         sqlx::query(
             r#"INSERT INTO rules (
-                id, text, compiled, active, scope, urgency_min, mute,
+                id, text, compiled, active, scope, urgency_min, mute, priority,
                 expires_at, active_window, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
         )
         .bind(&rule.id)
         .bind(&rule.text)
@@ -253,6 +253,7 @@ impl Db {
         .bind(&rule.scope)
         .bind(rule.urgency_min)
         .bind(rule.mute)
+        .bind(rule.priority)
         .bind(expires_at)
         .bind(active_window)
         .bind(created_at)
@@ -414,6 +415,7 @@ impl Db {
             scope: row.try_get("scope")?,
             urgency_min: row.try_get("urgency_min")?,
             mute: row.try_get("mute")?,
+            priority: row.try_get("priority").unwrap_or(0),
             expires_at,
             active_window: active_window_val.and_then(|v| serde_json::from_value(v).ok()),
             created_at,

@@ -308,17 +308,42 @@ async fn cmd_rule(command: cli::RuleCommands) -> Result<()> {
     let url = cli::daemon_url(None);
     let client = reqwest::Client::new();
     match command {
-        cli::RuleCommands::Add { text, scope, urgency_min, mute } => {
-            let body = serde_json::json!({
+        cli::RuleCommands::Add { text, scope, urgency_min, mute, priority, expires } => {
+            let mut body = serde_json::json!({
                 "text": text,
                 "scope": scope,
                 "urgency_min": urgency_min,
                 "mute": mute,
+                "priority": priority,
+            });
+            if let Some(exp) = expires {
+                body["expires_in"] = serde_json::json!(exp);
+            }
+            let resp = client.post(format!("{}/rules", url)).json(&body).send().await?;
+            if resp.status().is_success() {
+                let rules: Vec<Rule> = resp.json().await?;
+                for rule in rules {
+                    println!("Added rule {}: {}", rule.id, rule.text);
+                }
+            } else {
+                anyhow::bail!("daemon error: {}", resp.text().await.unwrap_or_default());
+            }
+        }
+        cli::RuleCommands::Allow { agent, from, for_duration } => {
+            let text = format!("allow {} from {} for {}", agent, from, for_duration);
+            let body = serde_json::json!({
+                "text": text,
+                "priority": 0,
             });
             let resp = client.post(format!("{}/rules", url)).json(&body).send().await?;
             if resp.status().is_success() {
-                let rule: Rule = resp.json().await?;
-                println!("Added rule {}: {}", rule.id, rule.text);
+                let rules: Vec<Rule> = resp.json().await?;
+                println!("Created {} rule(s) for allow-list:", rules.len());
+                for rule in &rules {
+                    let expires = rule.expires_at.map(|e| format!(" (expires {})", e)).unwrap_or_default();
+                    let pri = if rule.priority > 0 { format!(" [pri:{}]", rule.priority) } else { String::new() };
+                    println!("  [{}] {}{} — {}", rule.id, rule.text, pri, expires);
+                }
             } else {
                 anyhow::bail!("daemon error: {}", resp.text().await.unwrap_or_default());
             }
@@ -326,9 +351,22 @@ async fn cmd_rule(command: cli::RuleCommands) -> Result<()> {
         cli::RuleCommands::List => {
             let resp = client.get(format!("{}/state", url)).send().await?;
             let state: DashboardState = resp.json().await?;
+            let now = chrono::Utc::now();
             for r in state.rules {
-                let status = if r.active { "active" } else { "inactive" };
-                println!("[{}] {} — {}", r.id, status, r.text);
+                let status = if !r.active {
+                    "inactive"
+                } else if let Some(exp) = r.expires_at {
+                    if now > exp {
+                        "expired"
+                    } else {
+                        let mins = (exp - now).num_minutes();
+                        &format!("active (~{}m left)", mins)
+                    }
+                } else {
+                    "active"
+                };
+                let pri = if r.priority > 0 { format!(" [pri:{}]", r.priority) } else { String::new() };
+                println!("[{}] {}{} — {}", r.id, status, pri, r.text);
             }
         }
         cli::RuleCommands::Rm { id: rule_id } => {
@@ -504,6 +542,20 @@ EXAMPLES
 DASHBOARD
   Open http://localhost:7878 in a browser. Click cards to answer.
   Keyboard: J/K navigate, Enter open, 1-9 answer.
+
+RULES (filtering / muting / allow-lists)
+  Rules are evaluated in priority order (highest applied last, can override).
+  Time-bounded rules auto-expire and disappear from the active list.
+
+  sjbis rule list               Show active rules with time remaining
+  sjbis rule add "mute all iMessage" --priority 10 --expires 1h
+  sjbis rule add "surface iMessage from Jeff" --priority 20 --expires 1h
+  sjbis rule allow --agent iMessage --from "Jeff,Carmen,JCS-Central" --for-duration 1h
+  sjbis rule rm r-abc123        Remove a rule by id
+
+  Natural language patterns that compile automatically:
+    "allow <agent> from <contact1, contact2> for <duration>"
+    Creates a mute-all + surface-exceptions ruleset.
 
 LIST / STATUS / CANCEL / DISMISS
   sjbis list                    Show open notifications

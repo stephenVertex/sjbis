@@ -78,6 +78,24 @@ pub enum RuleCommands {
         /// Mute matching notifications
         #[arg(long)]
         mute: bool,
+        /// Rule priority (higher = applied later, can override lower)
+        #[arg(long, default_value = "0")]
+        priority: i32,
+        /// Auto-expire after duration (e.g. 1h, 30m, 1d)
+        #[arg(long)]
+        expires: Option<String>,
+    },
+    /// Allow messages from specific contacts only, mute everything else
+    Allow {
+        /// Agent name (e.g. iMessage, Signal)
+        #[arg(long)]
+        agent: String,
+        /// Comma-separated list of contacts to allow
+        #[arg(long)]
+        from: String,
+        /// Duration to keep rule active (e.g. 1h, 30m)
+        #[arg(long, default_value = "1h")]
+        for_duration: String,
     },
     List,
     Rm {

@@ -176,6 +176,18 @@ function AgentRail({ agents, counts, filterAgent, onFilterAgent, textMode }) {
   );
 }
 
+function formatRuleExpiry(expiresAt) {
+  if (!expiresAt) return null;
+  const exp = new Date(expiresAt);
+  const now = new Date();
+  const diffMs = exp - now;
+  if (diffMs <= 0) return 'expired';
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 60) return `${mins}m left`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h left`;
+}
+
 function CommandBar({ onAddRule }) {
   const [input, setInput] = React.useState('');
   const [rules, setRules] = React.useState([]);
@@ -184,9 +196,19 @@ function CommandBar({ onAddRule }) {
     if (!input.trim()) return;
     const text = input.trim();
     const isMute = /mute|silence|quiet|hide/i.test(text);
+    const isAllow = /^allow /i.test(text) || /^only allow /i.test(text);
     const rule = { id: 'r' + Date.now(), text, active: true, scope: 'inbox-agent', urgencyMin: 0, mute: isMute };
     setRules([...rules, rule]);
-    onAddRule(text, 'inbox-agent', 0, isMute).catch(console.error);
+    // For allow-list patterns, the server creates multiple rules
+    onAddRule(text, 'inbox-agent', 0, isMute).then((created) => {
+      if (Array.isArray(created)) {
+        // Server returned multiple rules
+        const newRules = created.map((r) => ({ ...r, active: true }));
+        setRules((prev) => [...newRules, ...prev.filter((p) => !newRules.find((n) => n.id === p.id)))]);
+      } else {
+        setRules((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+      }
+    }).catch(console.error);
     setInput('');
   };
   const remove = (id) => {
@@ -198,17 +220,22 @@ function CommandBar({ onAddRule }) {
       <span className="slash">RULE /</span>
       <input
         value={input}
-        placeholder='Tell me what to surface — e.g. "only family + code agents for the next hour"'
+        placeholder='e.g. "allow iMessage from Jeff, Carmen for 1h" or "mute all iMessage"'
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && submit()}
       />
       <div className="chips">
-        {rules.slice(0, 4).map((r) => (
-          <span key={r.id} className={'chip' + (r.mute ? ' mute' : '')}>
-            <span className="x" onClick={() => remove(r.id)}>×</span>
-            {r.text.length > 32 ? r.text.slice(0, 30) + '…' : r.text}
-          </span>
-        ))}
+        {rules.slice(0, 6).map((r) => {
+          const expiry = formatRuleExpiry(r.expires_at || r.expiresAt);
+          const pri = r.priority > 0 ? `[${r.priority}] ` : '';
+          return (
+            <span key={r.id} className={'chip' + (r.mute ? ' mute' : '') + (expiry === 'expired' ? ' expired' : '')}>
+              <span className="x" onClick={() => remove(r.id)}>×</span>
+              {pri}{r.text.length > 32 ? r.text.slice(0, 30) + '…' : r.text}
+              {expiry && <span className="chip-expiry">{expiry}</span>}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
