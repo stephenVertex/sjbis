@@ -338,6 +338,17 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Notification
     Ok(Json(notifs))
 }
 
+/// GET /notification/{id} — get a single notification by ID
+pub async fn get_notification(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Notification>, (StatusCode, Json<serde_json::Value>)> {
+    match state.db.get_notification(&id).await.map_err(db_err)? {
+        Some(notif) => Ok(Json(notif)),
+        None => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
+    }
+}
+
 /// GET /history — answered / timed out
 #[derive(Deserialize)]
 pub struct HistoryQuery {

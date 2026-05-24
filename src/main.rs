@@ -57,6 +57,7 @@ async fn main() -> Result<()> {
         cli::Commands::List { json } => cmd_list(json).await,
         cli::Commands::Cancel { id } => cmd_cancel(id).await,
         cli::Commands::Wait { id } => cmd_wait(id).await,
+        cli::Commands::Status { id } => cmd_status(id).await,
         cli::Commands::Rule { command } => cmd_rule(command).await,
         cli::Commands::Daemon { command } => cmd_daemon(command).await,
         cli::Commands::Prime => cmd_prime().await,
@@ -227,6 +228,40 @@ async fn cmd_wait(id: String) -> Result<()> {
     let client = reqwest::Client::new();
     let answer = wait_for_answer(&client, &url, &id).await?;
     println!("{}", serde_json::to_string_pretty(&answer)?);
+    Ok(())
+}
+
+async fn cmd_status(id: String) -> Result<()> {
+    let url = cli::daemon_url(None);
+    let client = reqwest::Client::new();
+    let resp = client.get(format!("{}/notification/{}", url, id)).send().await?;
+    if resp.status().is_success() {
+        let notif: Notification = resp.json().await?;
+        let status_str = match notif.status {
+            NotificationStatus::Open => "open",
+            NotificationStatus::Answered => "answered",
+            NotificationStatus::Cancelled => "cancelled",
+            NotificationStatus::Muted => "muted",
+            NotificationStatus::TimedOut => "timed_out",
+        };
+        println!("id:        {}", notif.id);
+        println!("status:    {}", status_str);
+        println!("agent:     {}", notif.agent_name);
+        println!("question:  {}", notif.question);
+        if let Some(ref answer) = notif.answer {
+            println!("answer:    {}", answer);
+        }
+        if let Some(ref note) = notif.note {
+            println!("note:      {}", note);
+        }
+        if let Some(ref answered_at) = notif.answered_at {
+            println!("answered:  {}", answered_at);
+        }
+    } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        anyhow::bail!("notification {} not found", id);
+    } else {
+        anyhow::bail!("daemon error: {}", resp.text().await.unwrap_or_default());
+    }
     Ok(())
 }
 
@@ -419,9 +454,10 @@ DASHBOARD
   Open http://localhost:7878 in a browser. Click cards to answer.
   Keyboard: J/K navigate, Enter open, 1-9 answer.
 
-LIST / CANCEL
-  sjbis list
-  sjbis cancel sjbis-AbCdEfGh
+LIST / STATUS / CANCEL
+  sjbis list                    Show open notifications
+  sjbis status sjbis-AbCdEfGh   Check state of any notification (open/answered/cancelled/timed_out)
+  sjbis cancel sjbis-AbCdEfGh   Cancel an open notification
 "#;
     println!("SJBIS — How to ask questions\n\n{}\n\n{}", status_banner, help_body);
     Ok(())

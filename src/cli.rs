@@ -31,6 +31,11 @@ pub enum Commands {
         /// Notification id
         id: String,
     },
+    /// Get the current status of a notification by id
+    Status {
+        /// Notification id
+        id: String,
+    },
     /// Manage rules
     Rule {
         #[command(subcommand)]
