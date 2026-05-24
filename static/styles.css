@@ -249,11 +249,18 @@ button { font-family: inherit; }
   color: var(--bg);
   padding: 0 5px;
 }
-.agent-pill.muted { opacity: 0.35; }
-.agent-pill.muted::after {
-  content: ''; position: absolute; inset: 0;
-  background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,179,65,0.4) 6px 7px);
-  border-radius: 14px;
+.agent-pill.active {
+  background: var(--surf-2);
+  border-color: var(--agent, var(--lime));
+  box-shadow: 0 0 0 1px var(--agent, var(--lime)), 0 4px 12px rgba(0,0,0,0.3);
+}
+.agent-pill.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 4px; bottom: 4px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--agent, var(--lime));
 }
 
 /* Text mode rail — compact monospace names */

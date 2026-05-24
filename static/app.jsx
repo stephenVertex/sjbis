@@ -123,17 +123,17 @@ function NotificationCard({ n, onClick, agents, selected, cardRef }) {
   );
 }
 
-function AgentRail({ agents, counts, muted, onToggleMute, textMode }) {
+function AgentRail({ agents, counts, filterAgent, onFilterAgent, textMode }) {
   return (
     <div className={'rail' + (textMode ? ' text-mode' : '')}>
       <div className="lbl">SRC</div>
       {Object.entries(agents).map(([id, a]) => (
         <div
           key={id}
-          className={'agent-pill' + (muted.has(id) ? ' muted' : '') + (textMode ? ' text' : '')}
+          className={'agent-pill' + (filterAgent === id ? ' active' : '') + (textMode ? ' text' : '')}
           style={{ borderColor: counts[id] ? window.agentColor(id) : undefined }}
           title={a.name}
-          onClick={() => onToggleMute(id)}
+          onClick={() => onFilterAgent(id)}
         >
           {textMode ? (
             <span className="agent-name" style={{ color: window.agentColor(id) }}>{a.name}</span>
@@ -240,7 +240,7 @@ function App() {
   const [history, setHistory] = React.useState([]);
   const [rules, setRules] = React.useState([]);
   const [agents, setAgents] = React.useState({});
-  const [muted, setMuted] = React.useState(new Set());
+  const [filterAgent, setFilterAgent] = React.useState(null);
   const [focused, setFocused] = React.useState(null);
   const [burst, setBurst] = React.useState(null);
   const [selectedIdx, setSelectedIdx] = React.useState(0);
@@ -384,11 +384,12 @@ function App() {
     return c;
   }, [notifications, agents]);
 
-  // Filtered by mute set
+  // Filtered to single agent when rail is clicked
   const visible = React.useMemo(
-    () => notifications.filter((n) => !muted.has(n.agent_name || n.agent))
+    () => notifications
+      .filter((n) => !filterAgent || (n.agent_name || n.agent) === filterAgent)
       .sort((a, b) => b.urgency - a.urgency),
-    [notifications, muted]
+    [notifications, filterAgent]
   );
 
   // Keep selection in bounds
@@ -479,12 +480,9 @@ function App() {
     }
   };
 
-  const onToggleMute = (id) => {
-    setMuted((m) => {
-      const n = new Set(m);
-      n.has(id) ? n.delete(id) : n.add(id);
-      return n;
-    });
+  const onFilterAgent = (id) => {
+    setFilterAgent((current) => current === id ? null : id);
+    setSelectedIdx(0);
   };
 
   // Demo notifications are no longer injected client-side.
@@ -514,8 +512,8 @@ function App() {
         <AgentRail
           agents={agents}
           counts={counts}
-          muted={muted}
-          onToggleMute={onToggleMute}
+          filterAgent={filterAgent}
+          onFilterAgent={onFilterAgent}
           textMode={t.textRail}
         />
 
@@ -524,8 +522,10 @@ function App() {
             <h1>Awaiting your attention</h1>
             <span className="count">
               <strong>{visible.length}</strong> open ·{' '}
-              {visible.filter((v) => v.urgency >= 4).length} urgent ·{' '}
-              {muted.size} source{muted.size !== 1 ? 's' : ''} muted
+              {visible.filter((v) => v.urgency >= 4).length} urgent
+              {filterAgent && (
+                <>{' · Showing only: '}{agents[filterAgent]?.name || filterAgent}</>
+              )}
             </span>
           </div>
           <div className="field-grid">
