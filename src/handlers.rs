@@ -12,7 +12,6 @@ use axum::{
 use chrono::Utc;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::BroadcastStream;
@@ -23,16 +22,10 @@ pub type Waiters = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<Answer
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db_path: PathBuf,
+    pub db: Db,
     pub broadcaster: Broadcaster,
     pub router: Arc<Option<AiRouter>>,
     pub waiters: Waiters,
-}
-
-impl AppState {
-    pub fn db(&self) -> anyhow::Result<Db> {
-        Db::open(&self.db_path)
-    }
 }
 
 fn db_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<serde_json::Value>) {
@@ -50,11 +43,10 @@ pub async fn health() -> &'static str {
 
 /// GET /state — full dashboard init payload
 pub async fn get_state(State(state): State<AppState>) -> Result<Json<DashboardState>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-    let notifications = db.list_open_notifications().map_err(db_err)?;
-    let history = db.list_history(50).map_err(db_err)?;
-    let rules = db.list_rules().map_err(db_err)?;
-    let agents_raw = db.list_agents().map_err(db_err)?;
+    let notifications = state.db.list_open_notifications().await.map_err(db_err)?;
+    let history = state.db.list_history(50).await.map_err(db_err)?;
+    let rules = state.db.list_rules().await.map_err(db_err)?;
+    let agents_raw = state.db.list_agents().await.map_err(db_err)?;
     let mut agents = HashMap::new();
     for a in agents_raw {
         agents.insert(a.name.clone(), a);
@@ -72,18 +64,16 @@ pub async fn ask(
     State(state): State<AppState>,
     Json(req): Json<AskRequest>,
 ) -> Result<Json<Notification>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-
     // Check idempotency: if caller_id provided and exists within 24h, return existing
     if let Some(ref caller_id) = req.id {
         let since = Utc::now() - chrono::Duration::hours(24);
-        if let Ok(Some(existing)) = db.get_notification_by_caller_id(caller_id, since) {
+        if let Ok(Some(existing)) = state.db.get_notification_by_caller_id(caller_id, since).await {
             return Ok(Json(existing));
         }
     }
 
     // Resolve agent identity
-    let _agent = db.get_or_create_agent(&req.agent_name).map_err(db_err)?;
+    let _agent = state.db.get_or_create_agent(&req.agent_name).await.map_err(db_err)?;
 
     // Determine question type
     let mut question_type = req.question_type.clone().unwrap_or(QuestionType::Ack);
@@ -92,7 +82,7 @@ pub async fn ask(
     // If no explicit type and we have an AI router, guess it
     let router_result = if req.question_type.is_none() {
         if let Some(ref router) = *state.router {
-            let open = db.list_open_notifications().unwrap_or_default();
+            let open = state.db.list_open_notifications().await.unwrap_or_default();
             let result = router.classify(&req.question, &req.agent_name, req.urgency, &open).await;
             if let Some(ref suggested) = result.renderer_suggested {
                 if let Ok(parsed) = suggested.parse::<QuestionType>() {
@@ -184,13 +174,13 @@ pub async fn ask(
     }
 
     // Load and evaluate rules
-    let db_rules = db.list_rules().map_err(db_err)?;
+    let db_rules = state.db.list_rules().await.map_err(db_err)?;
     let (mut notification, auto_answer) = rules::evaluate(&db_rules, notification);
 
     if let Some(answer) = auto_answer {
         // Auto-answer: store and broadcast immediately
         let now = Utc::now();
-        db.answer_notification(&notification.id, &answer, Some(&answer)).map_err(db_err)?;
+        state.db.answer_notification(&notification.id, &answer, Some(&answer)).await.map_err(db_err)?;
         notification.status = NotificationStatus::Answered;
         notification.answer = Some(answer.clone());
         notification.answered_at = Some(now);
@@ -210,12 +200,12 @@ pub async fn ask(
     }
 
     if notification.status == NotificationStatus::Muted {
-        db.insert_notification(&notification).map_err(db_err)?;
+        state.db.insert_notification(&notification).await.map_err(db_err)?;
         // Don't broadcast muted notifications
         return Ok(Json(notification));
     }
 
-    db.insert_notification(&notification).map_err(db_err)?;
+    state.db.insert_notification(&notification).await.map_err(db_err)?;
 
     // Broadcast to all SSE clients
     state.broadcaster.broadcast(&SseEvent::NotificationCreated { notification: notification.clone() });
@@ -229,9 +219,7 @@ pub async fn answer(
     Path(id): Path<String>,
     Json(req): Json<AnswerRequest>,
 ) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-
-    let notif = match db.get_notification(&id) {
+    let notif = match state.db.get_notification(&id).await {
         Ok(Some(n)) => n,
         Ok(None) => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
         Err(e) => return Err(db_err(e)),
@@ -244,9 +232,9 @@ pub async fn answer(
     let now = Utc::now();
     let latency = now.signed_duration_since(notif.created_at).num_milliseconds();
 
-    db.answer_notification(&id, &req.answer, req.via.as_deref().or(Some(&req.answer))).map_err(db_err)?;
+    state.db.answer_notification(&id, &req.answer, req.via.as_deref().or(Some(&req.answer))).await.map_err(db_err)?;
 
-    let updated = db.get_notification(&id).unwrap_or(Some(notif.clone())).unwrap_or(notif.clone());
+    let updated = state.db.get_notification(&id).await.unwrap_or(Some(notif.clone())).unwrap_or(notif.clone());
 
     let envelope = AnswerEnvelope {
         id: id.clone(),
@@ -281,13 +269,12 @@ pub async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-    match db.get_notification(&id) {
+    match state.db.get_notification(&id).await {
         Ok(Some(notif)) => {
             if notif.status == NotificationStatus::Answered {
                 return Ok(StatusCode::NO_CONTENT);
             }
-            db.update_status(&id, NotificationStatus::Cancelled).map_err(db_err)?;
+            state.db.update_status(&id, NotificationStatus::Cancelled).await.map_err(db_err)?;
             state.broadcaster.broadcast(&SseEvent::NotificationCancelled { id: id.clone() });
             Ok(StatusCode::NO_CONTENT)
         }
@@ -298,8 +285,7 @@ pub async fn cancel(
 
 /// GET /list — dump open notifications
 pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Notification>>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-    let notifs = db.list_open_notifications().map_err(db_err)?;
+    let notifs = state.db.list_open_notifications().await.map_err(db_err)?;
     Ok(Json(notifs))
 }
 
@@ -312,8 +298,7 @@ pub async fn history(
     State(state): State<AppState>,
     Query(q): Query<HistoryQuery>,
 ) -> Result<Json<Vec<Notification>>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-    let items = db.list_history(q.limit.unwrap_or(50)).map_err(db_err)?;
+    let items = state.db.list_history(q.limit.unwrap_or(50)).await.map_err(db_err)?;
     Ok(Json(items))
 }
 
@@ -338,8 +323,6 @@ pub async fn create_rule(
     State(state): State<AppState>,
     Json(body): Json<CreateRuleBody>,
 ) -> Result<Json<Rule>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-
     let rule = Rule {
         id: format!("r-{}", nanoid::nanoid!(6)),
         text: body.text.clone(),
@@ -353,7 +336,7 @@ pub async fn create_rule(
         created_at: Utc::now(),
     };
 
-    db.insert_rule(&rule).map_err(db_err)?;
+    state.db.insert_rule(&rule).await.map_err(db_err)?;
 
     state.broadcaster.broadcast(&SseEvent::RuleCreated { rule: rule.clone() });
     Ok(Json(rule))
@@ -364,16 +347,14 @@ pub async fn delete_rule(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-    db.delete_rule(&id).map_err(db_err)?;
+    state.db.delete_rule(&id).await.map_err(db_err)?;
     state.broadcaster.broadcast(&SseEvent::RuleDeleted { id });
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// GET /agents
 pub async fn list_agents(State(state): State<AppState>) -> Result<Json<HashMap<String, Agent>>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-    let raw = db.list_agents().map_err(db_err)?;
+    let raw = state.db.list_agents().await.map_err(db_err)?;
     let mut agents = HashMap::new();
     for a in raw {
         agents.insert(a.name.clone(), a);
@@ -386,8 +367,7 @@ pub async fn register_agent(
     State(state): State<AppState>,
     Json(agent): Json<Agent>,
 ) -> Result<Json<Agent>, (StatusCode, Json<serde_json::Value>)> {
-    let db = state.db().map_err(db_err)?;
-    db.upsert_agent(&agent).map_err(db_err)?;
+    state.db.upsert_agent(&agent).await.map_err(db_err)?;
     Ok(Json(agent))
 }
 
@@ -397,8 +377,7 @@ pub async fn wait_for_answer(
     Path(id): Path<String>,
 ) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
     // First check if already answered
-    let db = state.db().map_err(db_err)?;
-    if let Ok(Some(notif)) = db.get_notification(&id) {
+    if let Ok(Some(notif)) = state.db.get_notification(&id).await {
         if notif.status == NotificationStatus::Answered {
             let envelope = AnswerEnvelope {
                 id: id.clone(),
@@ -435,7 +414,7 @@ pub async fn wait_for_answer(
 }
 
 /// Background task: deliver response back to caller
-async fn deliver_response(notif: Notification, answer: String, envelope: AnswerEnvelope) {
+async fn deliver_response(notif: Notification, _answer: String, envelope: AnswerEnvelope) {
     match notif.reply_to {
         ReplyTo::Webhook { url } => {
             let client = reqwest::Client::new();

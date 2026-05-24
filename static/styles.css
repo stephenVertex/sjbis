@@ -29,6 +29,7 @@
   --display: 'Bricolage Grotesque', ui-sans-serif, system-ui;
   --sans:    'Space Grotesk', ui-sans-serif, system-ui;
   --mono:    'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  --iosevka: 'IBM Plex Mono', 'Iosevka', 'Iosevka Semibold', 'JetBrains Mono', ui-monospace, monospace;
 
   --r-s: 6px;
   --r-m: 12px;
@@ -90,6 +91,9 @@ button { font-family: inherit; }
   grid-template-rows: 64px 1fr;
   height: 100vh;
   gap: 0;
+}
+.app.text-rail {
+  grid-template-columns: 130px 1fr 320px;
 }
 
 /* ── Top bar ───────────────────────────────────────────────────────────── */
@@ -250,6 +254,50 @@ button { font-family: inherit; }
   content: ''; position: absolute; inset: 0;
   background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,179,65,0.4) 6px 7px);
   border-radius: 14px;
+}
+
+/* Text mode rail — compact monospace names */
+.rail.text-mode {
+  align-items: stretch;
+  padding: 8px 6px;
+  gap: 2px;
+  min-width: 120px;
+}
+.rail.text-mode .lbl {
+  font-family: var(--iosevka);
+  font-size: 8px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding-left: 4px;
+}
+.rail.text-mode .agent-pill {
+  width: auto; height: auto;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-family: var(--iosevka);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  justify-content: space-between;
+  gap: 6px;
+  border-width: 1px;
+}
+.rail.text-mode .agent-pill .agent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 90px;
+  font-size: 10px;
+  line-height: 1.2;
+}
+.rail.text-mode .agent-pill .badge {
+  position: static;
+  min-width: 14px; height: 14px;
+  border-radius: 7px;
+  font-size: 8px;
+  font-family: var(--iosevka);
+  font-weight: 700;
+  padding: 0 3px;
 }
 
 /* ── Main canvas ───────────────────────────────────────────────────────── */

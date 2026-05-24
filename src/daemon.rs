@@ -9,7 +9,6 @@ use axum::{
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -17,36 +16,36 @@ use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 pub async fn run_daemon(
-    db_path: PathBuf,
     port: u16,
     api_key: Option<String>,
 ) -> anyhow::Result<()> {
-    // Seed default agents if db doesn't exist or is empty
-    if let Ok(db) = Db::open(&db_path) {
-        let existing = db.list_agents()?;
-        if existing.is_empty() {
-            let defaults = vec![
-                Agent { name: "inbox-agent".to_string(), glyph: "◐".to_string(), color: agent_color("inbox-agent"), kind: "email".to_string() },
-                Agent { name: "cal-agent".to_string(), glyph: "◧".to_string(), color: agent_color("cal-agent"), kind: "schedule".to_string() },
-                Agent { name: "code-agent".to_string(), glyph: "⌬".to_string(), color: agent_color("code-agent"), kind: "code".to_string() },
-                Agent { name: "pay-agent".to_string(), glyph: "$".to_string(), color: agent_color("pay-agent"), kind: "finance".to_string() },
-                Agent { name: "fam".to_string(), glyph: "♡".to_string(), color: agent_color("fam"), kind: "people".to_string() },
-                Agent { name: "shop-agent".to_string(), glyph: "☁".to_string(), color: agent_color("shop-agent"), kind: "commerce".to_string() },
-                Agent { name: "doc-agent".to_string(), glyph: "¶".to_string(), color: agent_color("doc-agent"), kind: "docs".to_string() },
-                Agent { name: "guard".to_string(), glyph: "⌖".to_string(), color: agent_color("guard"), kind: "security".to_string() },
-                Agent { name: "tax-agent".to_string(), glyph: "∑".to_string(), color: agent_color("tax-agent"), kind: "finance".to_string() },
-                Agent { name: "travel".to_string(), glyph: "✈".to_string(), color: agent_color("travel"), kind: "travel".to_string() },
-            ];
-            for a in defaults {
-                let _ = db.upsert_agent(&a);
-            }
+    let dsn = crate::cli::load_dsn()?;
+    let db = Db::connect(&dsn).await?;
+
+    // Seed default agents if empty
+    let existing = db.list_agents().await?;
+    if existing.is_empty() {
+        let defaults = vec![
+            Agent { name: "inbox-agent".to_string(), glyph: "◐".to_string(), color: agent_color("inbox-agent"), kind: "email".to_string() },
+            Agent { name: "cal-agent".to_string(), glyph: "◧".to_string(), color: agent_color("cal-agent"), kind: "schedule".to_string() },
+            Agent { name: "code-agent".to_string(), glyph: "⌬".to_string(), color: agent_color("code-agent"), kind: "code".to_string() },
+            Agent { name: "pay-agent".to_string(), glyph: "$".to_string(), color: agent_color("pay-agent"), kind: "finance".to_string() },
+            Agent { name: "fam".to_string(), glyph: "♡".to_string(), color: agent_color("fam"), kind: "people".to_string() },
+            Agent { name: "shop-agent".to_string(), glyph: "☁".to_string(), color: agent_color("shop-agent"), kind: "commerce".to_string() },
+            Agent { name: "doc-agent".to_string(), glyph: "¶".to_string(), color: agent_color("doc-agent"), kind: "docs".to_string() },
+            Agent { name: "guard".to_string(), glyph: "⌖".to_string(), color: agent_color("guard"), kind: "security".to_string() },
+            Agent { name: "tax-agent".to_string(), glyph: "∑".to_string(), color: agent_color("tax-agent"), kind: "finance".to_string() },
+            Agent { name: "travel".to_string(), glyph: "✈".to_string(), color: agent_color("travel"), kind: "travel".to_string() },
+        ];
+        for a in defaults {
+            let _ = db.upsert_agent(&a).await;
         }
     }
 
     let router = api_key.map(AiRouter::new);
 
     let state = AppState {
-        db_path,
+        db,
         broadcaster: Broadcaster::new(),
         router: Arc::new(router),
         waiters: Arc::new(Mutex::new(HashMap::new())),

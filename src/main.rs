@@ -27,6 +27,7 @@ async fn main() -> Result<()> {
         cli::Commands::Wait { id } => cmd_wait(id).await,
         cli::Commands::Rule { command } => cmd_rule(command).await,
         cli::Commands::Daemon { command } => cmd_daemon(command).await,
+        cli::Commands::Prime => cmd_prime().await,
         cli::Commands::Register { agent_name, glyph, color } => cmd_register(agent_name, glyph, color).await,
     }
 }
@@ -257,10 +258,9 @@ async fn cmd_daemon(command: cli::DaemonCommands) -> Result<()> {
                 println!("Daemon started on port {} (pid {})", port, pid);
             } else {
                 // Run inline
-                let db_path = cli::db_path();
                 let api_key = std::env::var("FIREWORKS_API_KEY").ok();
                 println!("Starting daemon on port {}...", port);
-                daemon::run_daemon(db_path, port, api_key).await?;
+                daemon::run_daemon(port, api_key).await?;
             }
         }
         cli::DaemonCommands::Stop => {
@@ -301,6 +301,89 @@ async fn cmd_daemon(command: cli::DaemonCommands) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+async fn cmd_prime() -> Result<()> {
+    let url = cli::daemon_url(None);
+    let client = reqwest::Client::new();
+    let daemon_ok = match client.get(format!("{}/health", url)).timeout(std::time::Duration::from_secs(2)).send().await {
+        Ok(resp) if resp.status().is_success() => true,
+        _ => false,
+    };
+
+    let status_banner = if daemon_ok {
+        format!("  Daemon: running on {}", url)
+    } else {
+        "  Daemon: NOT RUNNING — start it with: sjbis daemon start --port 7878".to_string()
+    };
+
+    let help_body = r#"  The surfacer is a dashboard where humans see and answer questions
+  from agents (scripts, tools, AI systems). Agents post questions via
+  the CLI. The daemon must be running first.
+
+STARTING THE DAEMON
+  sjbis daemon start --port 7878
+  sjbis daemon start --port 7878 --background
+
+POSTING A QUESTION (fire-and-forget)
+  sjbis ask --question "Deploy to prod?" --yesno --agent-name deploybot
+  sjbis ask --question "Lunch cuisine?" --choices "thai,indian,salad" --agent-name lunchbot
+
+POSTING A QUESTION (synchronous / blocking)
+  Add --blocking to wait for the human answer. The command does not
+  return until the user responds on the dashboard or the deadline hits.
+
+  sjbis ask --question "Approve PR #412?" --yesno --blocking --agent-name codebot
+
+  The answer is printed to stdout when it arrives. Use --json for
+  structured output (includes latency_ms, answer_label, etc.).
+
+QUESTION TYPES
+  --yesno           Yes / No
+  --text            Free text reply
+  --number          Numeric slider (use --min, --max, --step, --unit)
+  --choices "a,b,c" Multi-choice (CSV) or JSON array
+  --ack             Acknowledge-only (no data collected)
+  --file            File upload request (use --accept ".pdf,.csv")
+  --diff            Approve/reject a code diff
+  --pick <file>     Pick from a list of items (JSON file)
+  --schedule <file> Pick a time slot (JSON file)
+
+COMMON FLAGS
+  --agent-name      Required. Identifies the calling agent.
+  --instance        Context, e.g. "Gmail inbox", "Session s7b3d11"
+  --detail          Full paragraph of context for the human.
+  --urgency 0..5    0 = FYI, 5 = drop everything.
+  --deadline 6m     Duration (90s, 6m, 2h) or ISO timestamp.
+  --reply-to        stdout | webhook:URL | file:PATH | exit-code
+  --id <key>        Idempotency key. Same key within 24h = dedupe.
+  --json            Output raw JSON.
+
+EXAMPLES
+  # Security alert
+  sjbis ask --question "New device signed into GitHub." --ack \
+    --agent-name Sentinel --instance "GitHub" --urgency 4
+
+  # Schedule picker
+  echo '[{"day":"Mon","time":"10:00 AM"}]' > slots.json
+  sjbis ask --question "Book the 1:1?" --schedule slots.json \
+    --agent-name Chronos --instance "Calendar" --blocking
+
+  # Numeric
+  sjbis ask --question "How many cartons?" --number \
+    --min 0 --max 8 --step 1 --default 2 --unit cartons \
+    --agent-name Shopper
+
+DASHBOARD
+  Open http://localhost:7878 in a browser. Click cards to answer.
+  Keyboard: J/K navigate, Enter open, 1-9 answer.
+
+LIST / CANCEL
+  sjbis list
+  sjbis cancel sjbis-AbCdEfGh
+"#;
+    println!("SJBIS — How to ask questions\n\n{}\n\n{}", status_banner, help_body);
     Ok(())
 }
 

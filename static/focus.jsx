@@ -16,10 +16,35 @@ const TYPE_LABEL = {
 
 // Convert "-00:01:42" to "1m 42s ago"
 function fmtSentAt(s) {
+  if (!s) return '';
+  if (s.includes('T')) {
+    // ISO date string from API
+    const d = new Date(s);
+    const now = new Date();
+    const diff = Math.floor((now - d) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m ago`;
+  }
   const [h, m, sec] = s.replace('-', '').split(':').map(Number);
   if (h) return `${h}h ${m}m ago`;
   if (m) return `${m}m ${sec}s ago`;
   return `${sec}s ago`;
+}
+
+// Normalize API snake_case fields to camelCase expected by renderers
+function normalizeNotif(n) {
+  return {
+    ...n,
+    type: n.question_type || n.type || 'ack',
+    agent: n.agent_name || n.agent,
+    yesLabel: n.yesLabel || n.yes_label,
+    noLabel: n.noLabel || n.no_label,
+    ackLabel: n.ackLabel || n.ack_label,
+    defaultValue: n.defaultValue !== undefined ? n.defaultValue : n.default_value,
+    deadlineMs: n.deadlineMs || (n.deadline ? Math.max(0, new Date(n.deadline) - Date.now()) : undefined),
+    sentAt: n.sentAt || n.created_at || '',
+  };
 }
 
 // ── Countdown widget ────────────────────────────────────────────────────
@@ -51,6 +76,7 @@ function useFocusKeys(handlers, deps) {
     };
     const onKey = (e) => {
       if (isTyping(e.target) && !e.metaKey && !e.ctrlKey) return;
+      if (!e.key) return; // Guard against undefined key (composite/dead keys)
       for (const spec of handlers) {
         if (spec.match(e)) {
           e.preventDefault();
@@ -69,7 +95,7 @@ function YesNoRenderer({ n, onAnswer }) {
   // iMessage-sourced notifications get an "edit before send" affordance —
   // the literal answer text gets sent back over the wire, so let the user
   // customize ("Yes — be home by 9 ok?") instead of forcing the canned label.
-  const isChat = n.agent === 'fam';
+  const isChat = (n.agent_name || n.agent) === 'fam';
   const [editing, setEditing] = React.useState(null);
   // {label, text, k} or null. k disambiguates Yes vs No when both share a key.
   const startEdit = (label) => setEditing({ label, text: label, k: label });
@@ -161,7 +187,7 @@ function EditPen({ onClick, dark }) {
 }
 
 function MultiChoiceRenderer({ n, onAnswer }) {
-  const isChat = n.agent === 'fam';
+  const isChat = (n.agent_name || n.agent) === 'fam';
   const [sel, setSel] = React.useState(null);
   const [editing, setEditing] = React.useState(null);
   const cols = n.choices.length === 3 ? 'three' : n.choices.length === 4 ? 'four' : '';
@@ -438,7 +464,7 @@ function PicklistRenderer({ n, onAnswer }) {
           className="search"
           autoFocus
           value={q}
-          placeholder="Search hotels…"
+          placeholder="Search…"
           onChange={(e) => setQ(e.target.value)}
         />
         <div className="items">
@@ -462,7 +488,7 @@ function PicklistRenderer({ n, onAnswer }) {
           disabled={!items[cursor]}
           onClick={() => items[cursor] && onAnswer(items[cursor].title)}
         >
-          Book selection <span className="k">⏎</span>
+          Select <span className="k">⏎</span>
         </button>
       </div>
     </>
@@ -503,7 +529,7 @@ function ScheduleRenderer({ n, onAnswer }) {
           disabled={sel === null}
           onClick={() => onAnswer(`${n.slots[sel].day} · ${n.slots[sel].time}`)}
         >
-          Book this slot <span className="k">⏎</span>
+          Confirm <span className="k">⏎</span>
         </button>
       </div>
     </>
@@ -525,9 +551,10 @@ const RENDERERS = {
 // ── Focus shell ─────────────────────────────────────────────────────────
 
 function Focus({ n, onClose, onAnswer }) {
-  const agent = window.AGENTS[n.agent];
-  const Renderer = RENDERERS[n.type];
-  const agentColor = window.agentColor(n.agent);
+  const nn = normalizeNotif(n);
+  const agent = window.AGENTS ? (window.AGENTS[nn.agent] || { glyph: '◐', name: nn.agent }) : { glyph: '◐', name: nn.agent };
+  const Renderer = RENDERERS[nn.type] || AckRenderer;
+  const color = window.agentColor ? window.agentColor(nn.agent) : '#C7F33D';
 
   React.useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -538,24 +565,24 @@ function Focus({ n, onClose, onAnswer }) {
   return (
     <>
       <div className="focus-backdrop" onClick={onClose} />
-      <div className="focus" style={{ '--agent': agentColor }}>
+      <div className="focus" style={{ '--agent': color }}>
         <div className="focus-hd">
           <div className="glyph">{agent.glyph}</div>
           <div className="meta">
             <div className="label">
-              <strong>{n.sender}</strong> via {agent.name} · {fmtSentAt(n.sentAt)} · {TYPE_LABEL[n.type]}
+              <strong>{nn.sender}</strong> via {agent.name} · {fmtSentAt(nn.sentAt)} · {TYPE_LABEL[nn.type] || nn.type}
             </div>
             <div className="sender" style={{ marginTop: 2 }}>
-              Urgency {n.urgency}/5 · {n.blocking ? 'Blocking' : 'Non-blocking'}
+              Urgency {nn.urgency}/5 · {nn.blocking ? 'Blocking' : 'Non-blocking'}
             </div>
           </div>
-          {n.deadlineMs && <Countdown ms={n.deadlineMs} urgent={n.urgency >= 4} />}
+          {nn.deadlineMs > 0 && <Countdown ms={nn.deadlineMs} urgent={nn.urgency >= 4} />}
           <button className="close" onClick={onClose}>✕</button>
         </div>
         <div className="focus-body">
-          <h2 className="focus-q">{n.question}</h2>
-          {n.detail && <p className="focus-detail">{n.detail}</p>}
-          <Renderer n={n} onAnswer={onAnswer} />
+          <h2 className="focus-q">{nn.question}</h2>
+          {nn.detail && <p className="focus-detail">{nn.detail}</p>}
+          <Renderer n={nn} onAnswer={onAnswer} />
         </div>
       </div>
     </>

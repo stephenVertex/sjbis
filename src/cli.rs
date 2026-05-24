@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -40,6 +41,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: DaemonCommands,
     },
+    /// Show how to ask questions (primer for agents)
+    Prime,
     /// Register a long-running agent identity
     Register {
         #[arg(long)]
@@ -221,9 +224,31 @@ pub fn pidfile_path() -> PathBuf {
     dir.join("daemon.pid")
 }
 
-/// Path to the database
-pub fn db_path() -> PathBuf {
-    let dir = dirs::data_dir().unwrap_or_else(|| std::env::temp_dir()).join("sjbis");
-    let _ = std::fs::create_dir_all(&dir);
-    dir.join("sjbis.db")
+/// Load Postgres DSN from ~/.config/sjbis/database.toml (or platform config dir)
+pub fn load_dsn() -> anyhow::Result<String> {
+    let candidates = [
+        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+            .join(".config/sjbis/database.toml"),
+        dirs::config_dir()
+            .unwrap_or_else(|| std::env::temp_dir())
+            .join("sjbis/database.toml"),
+    ];
+
+    let mut last_err = None;
+    for path in &candidates {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                let config: toml::Value = toml::from_str(&content)
+                    .with_context(|| format!("failed to parse {}", path.display()))?;
+                let dsn = config.get("database")
+                    .and_then(|d: &toml::Value| d.get("dsn"))
+                    .and_then(|v: &toml::Value| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("database.toml missing [database] dsn field"))?;
+                return Ok(dsn.to_string());
+            }
+            Err(e) => last_err = Some((path.clone(), e)),
+        }
+    }
+    let (path, e) = last_err.unwrap();
+    Err(anyhow::anyhow!("failed to read database config at {}: {}", path.display(), e))
 }

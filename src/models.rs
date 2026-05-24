@@ -6,16 +6,24 @@ use std::collections::HashMap;
 pub type NotificationId = String;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
 pub enum QuestionType {
+    #[serde(rename = "yesno")]
     YesNo,
+    #[serde(rename = "multichoice")]
     Multichoice,
+    #[serde(rename = "freetext")]
     FreeText,
+    #[serde(rename = "numeric")]
     Numeric,
+    #[serde(rename = "file")]
     File,
+    #[serde(rename = "diff")]
     Diff,
+    #[serde(rename = "ack")]
     Ack,
+    #[serde(rename = "picklist")]
     PickList,
+    #[serde(rename = "schedule")]
     Schedule,
 }
 

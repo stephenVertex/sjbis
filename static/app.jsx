@@ -7,6 +7,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "palette": "lime",
   "showConnections": true,
   "compactRail": false,
+  "textRail": false,
   "incomingDemo": true
 }/*EDITMODE-END*/;
 
@@ -109,19 +110,23 @@ function NotificationCard({ n, onClick, agents, selected, cardRef }) {
   );
 }
 
-function AgentRail({ agents, counts, muted, onToggleMute }) {
+function AgentRail({ agents, counts, muted, onToggleMute, textMode }) {
   return (
-    <div className="rail">
+    <div className={'rail' + (textMode ? ' text-mode' : '')}>
       <div className="lbl">SRC</div>
       {Object.entries(agents).map(([id, a]) => (
         <div
           key={id}
-          className={'agent-pill' + (muted.has(id) ? ' muted' : '')}
+          className={'agent-pill' + (muted.has(id) ? ' muted' : '') + (textMode ? ' text' : '')}
           style={{ borderColor: counts[id] ? window.agentColor(id) : undefined }}
           title={a.name}
           onClick={() => onToggleMute(id)}
         >
-          <span style={{ color: window.agentColor(id) }}>{a.glyph}</span>
+          {textMode ? (
+            <span className="agent-name" style={{ color: window.agentColor(id) }}>{a.name}</span>
+          ) : (
+            <span style={{ color: window.agentColor(id) }}>{a.glyph}</span>
+          )}
           {counts[id] > 0 && (
             <span className="badge" style={{ background: window.agentColor(id) }}>
               {counts[id]}
@@ -229,6 +234,12 @@ function App() {
   const [connected, setConnected] = React.useState(false);
   const cardRefs = React.useRef({});
 
+  // Parse ?q_id=... from URL for deep-linking to a notification
+  const urlQId = React.useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('q_id');
+  }, []);
+
   // Load initial state
   React.useEffect(() => {
     apiState()
@@ -238,9 +249,26 @@ function App() {
         setRules(state.rules || []);
         setAgents(state.agents || {});
         window.AGENTS = state.agents || {};
+
+        // Deep-link: if q_id is in URL, focus that notification
+        if (urlQId) {
+          const n = (state.notifications || []).find((x) => x.id === urlQId);
+          if (n) setFocused(n);
+        }
       })
       .catch((e) => console.error('Failed to load state:', e));
-  }, []);
+  }, [urlQId]);
+
+  // Sync focused notification to URL (replaceState so back button closes it)
+  React.useEffect(() => {
+    const url = new URL(window.location);
+    if (focused) {
+      url.searchParams.set('q_id', focused.id);
+    } else {
+      url.searchParams.delete('q_id');
+    }
+    window.history.replaceState({}, '', url);
+  }, [focused]);
 
   // SSE connection
   React.useEffect(() => {
@@ -354,6 +382,9 @@ function App() {
         e.preventDefault();
         const n = visible[selectedIdx];
         if (n) setFocused(n);
+      } else if (key === 't') {
+        e.preventDefault();
+        window.postMessage({ type: '__activate_edit_mode' }, '*');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -379,20 +410,27 @@ function App() {
   const onAnswer = async (val) => {
     const n = focused;
     if (!n) return;
+    const isSkip = val === '(skipped)';
     try {
-      await apiAnswer(n.id, typeof val === 'string' ? val : String(val), 'dashboard');
+      if (!isSkip) {
+        await apiAnswer(n.id, typeof val === 'string' ? val : String(val), 'dashboard');
+      }
       setNotifications((prev) => prev.filter((x) => x.id !== n.id));
-      setHistory((prev) => [
-        { id: n.id, agent_name: n.agent_name || n.agent, question: n.question,
-          answer: typeof val === 'string' ? val : String(val), type: n.question_type || n.type,
-          answeredAt: new Date().toISOString() },
-        ...prev,
-      ]);
+      if (!isSkip) {
+        setHistory((prev) => [
+          { id: n.id, agent_name: n.agent_name || n.agent, question: n.question,
+            answer: typeof val === 'string' ? val : String(val), type: n.question_type || n.type,
+            answeredAt: new Date().toISOString() },
+          ...prev,
+        ]);
+      }
       setFocused(null);
-      setBurst({
-        text: (n.question_type || n.type) === 'ack' ? 'noted' : 'sent',
-        color: 'var(--lime)',
-      });
+      if (!isSkip) {
+        setBurst({
+          text: (n.question_type || n.type) === 'ack' ? 'noted' : 'sent',
+          color: 'var(--lime)',
+        });
+      }
     } catch (e) {
       console.error('Failed to answer:', e);
     }
@@ -406,35 +444,13 @@ function App() {
     });
   };
 
-  // Demo: incoming notification flash after 6 seconds
-  React.useEffect(() => {
-    if (!t.incomingDemo) return;
-    const tm = setTimeout(() => {
-      // This would normally come from SSE, but for demo we can still inject
-      const fresh = {
-        id: 'n-incoming',
-        agent_name: 'fam',
-        sender: 'Mia',
-        type: 'yesno',
-        question_type: 'yesno',
-        urgency: 5,
-        blocking: true,
-        sentAt: '-00:00:01',
-        deadlineMs: 4 * 60 * 1000,
-        question: 'Can I have a sleepover at Aya\'s tonight?',
-        detail: 'Mia just texted. Aya\'s parents (Lin & Rob) confirmed, and Mia would be picked up 9am Sunday.',
-        yesLabel: 'Yes, ok',
-        noLabel: 'Not tonight',
-      };
-      setNotifications((prev) => [fresh, ...prev]);
-    }, 6000);
-    return () => clearTimeout(tm);
-  }, [t.incomingDemo]);
+  // Demo notifications are no longer injected client-side.
+  // Use the TweaksPanel "Trigger urgent notification" button or `sjbis ask` CLI.
 
   return (
     <>
       <div className="field" />
-      <div className="app">
+      <div className={'app' + (t.textRail ? ' text-rail' : '')}>
         <div className="topbar">
           <div className="brand">
             <span className="dot" />
@@ -443,6 +459,13 @@ function App() {
           </div>
           <CommandBar onAddRule={apiAddRule} />
           <LiveClock />
+          <button
+            className="settings-btn"
+            title="Settings (T)"
+            onClick={() => window.postMessage({ type: '__activate_edit_mode' }, '*')}
+          >
+            ⚙
+          </button>
         </div>
 
         <AgentRail
@@ -450,6 +473,7 @@ function App() {
           counts={counts}
           muted={muted}
           onToggleMute={onToggleMute}
+          textMode={t.textRail}
         />
 
         <div className="canvas">
@@ -527,34 +551,29 @@ function App() {
           onChange={(v) => setTweak('compactRail', v)}
         />
         <window.TweakToggle
+          label="Text rail (monospace names instead of icons)" value={t.textRail}
+          onChange={(v) => setTweak('textRail', v)}
+        />
+        <window.TweakToggle
           label="Show connection lines" value={t.showConnections}
           onChange={(v) => setTweak('showConnections', v)}
         />
         <window.TweakSection label="Demo" />
-        <window.TweakToggle
-          label="Auto-incoming flash" value={t.incomingDemo}
-          onChange={(v) => setTweak('incomingDemo', v)}
-        />
         <window.TweakButton
           label="Trigger urgent notification"
-          onClick={() => {
+          onClick={async () => {
             const fresh = {
-              id: 'n-' + Date.now(),
-              agent: 'guard',
-              agent_name: 'guard',
-              sender: 'Sentinel',
-              type: 'yesno',
-              question_type: 'yesno',
-              urgency: 5,
-              blocking: true,
-              sentAt: '-00:00:01',
-              deadlineMs: 90 * 1000,
               question: 'Approve $4,221 wire to "Vendor Solutions LLC"?',
+              agent_name: 'guard',
+              urgency: 5,
+              yesno: true,
               detail: 'New payee. Bank flagged as unusual. Replies needed within 90s.',
-              yesLabel: 'Approve wire',
-              noLabel: 'Block & alert',
             };
-            setNotifications((prev) => [fresh, ...prev]);
+            await fetch(`${API_BASE}/ask`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(fresh),
+            });
           }}
         />
       </window.TweaksPanel>
