@@ -1294,3 +1294,75 @@ button { font-family: inherit; }
   opacity: 0.65;
 }
 .btn-action.primary .kbd-hint { background: rgba(7,8,12,0.15); color: rgba(7,8,12,0.75); border-color: rgba(7,8,12,0.2); }
+
+/* ── Snooze picker ──────────────────────────────────────────────────────── */
+.snooze-overlay {
+  max-width: 480px;
+  width: 90vw;
+}
+.snooze-presets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.snooze-pill {
+  appearance: none; border: 0;
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 600;
+  padding: 16px 8px;
+  border-radius: var(--r-m);
+  cursor: pointer;
+  background: var(--surf-2);
+  color: var(--ink);
+  border: 1px solid var(--hair);
+  transition: transform .12s, box-shadow .2s;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.snooze-pill:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: var(--surf-3);
+  border-color: var(--hair-2);
+}
+.snooze-pill:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.snooze-pill .k {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.snooze-custom {
+  display: flex; gap: 10px; align-items: center;
+}
+.snooze-custom input {
+  flex: 1;
+  appearance: none; border: 0;
+  background: var(--surf);
+  border: 1px solid var(--hair);
+  border-radius: var(--r-m);
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--ink);
+}
+.snooze-custom input:focus {
+  outline: none;
+  border-color: var(--agent, var(--lime));
+}
+.snooze-error {
+  margin-top: 10px;
+  padding: 10px 14px;
+  background: rgba(255, 31, 77, 0.12);
+  border: 1px solid rgba(255, 31, 77, 0.3);
+  border-radius: var(--r-m);
+  color: var(--siren);
+  font-size: 13px;
+}
+.snooze-overlay .focus-hd {
+  border-bottom: 1px solid var(--hair);
+}

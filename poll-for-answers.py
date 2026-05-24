@@ -18,6 +18,7 @@ QUESTIONS = [
         "instance": "Expenses",
         "detail": "$47.23 at Thai Garden — 4 people, project kickoff.",
         "urgency": 4,
+        "deadline": "15m",
     },
     {
         "question": "Reply to the design-review thread?",
@@ -27,6 +28,7 @@ QUESTIONS = [
         "placeholder": "e.g. 'Looks good — ship it.'",
         "detail": "Priya asked for final sign-off before merging the Figma branch.",
         "urgency": 2,
+        "deadline": "30m",
     },
     {
         "question": "How many extra standup minutes today?",
@@ -63,6 +65,7 @@ QUESTIONS = [
         "instance": "Lunchbot",
         "detail": "Team of 4, walking distance preferred. Budget ~$15/head.",
         "urgency": 3,
+        "deadline": "20m",
         "pick_data": [
             {"id": "r1", "title": "The Thai Garden", "meta": "$12 · 0.3mi · ★ 4.6"},
             {"id": "r2", "title": "Spice House", "meta": "$14 · 0.5mi · ★ 4.8"},
@@ -101,6 +104,7 @@ QUESTIONS = [
         "instance": "GitHub",
         "detail": "Renames getUser → fetchUser. 14 files, 23 call sites. Tests pass. 2 reviewers approved.",
         "urgency": 3,
+        "deadline": "2h",
     },
     {
         "question": "Claim Tuesday's burrito as a business expense?",

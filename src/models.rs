@@ -167,6 +167,8 @@ pub struct Notification {
     pub mute_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caller_id: Option<String>, // idempotency key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snooze_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

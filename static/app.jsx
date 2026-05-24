@@ -60,6 +60,19 @@ async function apiAddRule(text, scope, urgencyMin, mute) {
   return r.json();
 }
 
+async function apiSnooze(id, minutes) {
+  const r = await fetch(`${API_BASE}/snooze/${id}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ minutes }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.error || `failed to snooze (${r.status})`);
+  }
+  return r.json();
+}
+
 async function apiDeleteRule(id) {
   await fetch(`${API_BASE}/rules/${id}`, { method: 'DELETE' });
 }
@@ -283,9 +296,19 @@ function App() {
           case 'notification_created':
             setNotifications((prev) => [event.notification, ...prev]);
             break;
-          case 'notification_updated':
-            setNotifications((prev) => prev.map((n) => n.id === event.notification.id ? event.notification : n));
+          case 'notification_updated': {
+            const now = Date.now();
+            const snoozeUntil = event.notification?.snooze_until ? new Date(event.notification.snooze_until).getTime() : 0;
+            if (snoozeUntil > now) {
+              // Notification was snoozed — remove it from the active list
+              setNotifications((prev) => prev.filter((n) => n.id !== event.notification.id));
+              // Also clear focus if this was the focused notification
+              setFocused((f) => (f && f.id === event.notification.id) ? null : f);
+            } else {
+              setNotifications((prev) => prev.map((n) => n.id === event.notification.id ? event.notification : n));
+            }
             break;
+          }
           case 'notification_answered':
             setNotifications((prev) => prev.filter((n) => n.id !== event.envelope.id));
             // Add to history
@@ -310,6 +333,26 @@ function App() {
       }
     };
     return () => source.close();
+  }, []);
+
+  // Periodic background sync: catches out-of-band deletions (e.g. DB cleared)
+  React.useEffect(() => {
+    const sync = () => {
+      apiState()
+        .then((state) => {
+          setNotifications((prev) => {
+            const serverIds = new Set((state.notifications || []).map((n) => n.id));
+            return prev.filter((n) => serverIds.has(n.id));
+          });
+          setHistory(state.history || []);
+          setRules(state.rules || []);
+          setAgents(state.agents || {});
+          window.AGENTS = state.agents || {};
+        })
+        .catch((e) => console.error('Background sync failed:', e));
+    };
+    const id = setInterval(sync, 30000);
+    return () => clearInterval(id);
   }, []);
 
   // Override palette CSS vars from tweak
@@ -515,7 +558,7 @@ function App() {
       </div>
 
       {focused && (
-        <window.Focus n={focused} onClose={() => setFocused(null)} onAnswer={onAnswer} />
+        <window.Focus n={focused} onClose={() => setFocused(null)} onAnswer={onAnswer} onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(() => { setFocused(null); }).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })} />
       )}
       {burst && <window.Burst text={burst.text} color={burst.color} onDone={() => setBurst(null)} />}
 

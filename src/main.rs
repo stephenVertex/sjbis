@@ -10,7 +10,39 @@ mod sse;
 use anyhow::{Context, Result};
 use clap::Parser;
 use models::*;
-// No extra io imports needed
+
+/// Generate a synthetic diff preview from detail + question text when no
+/// explicit diff is provided. Produces a few context / add / del lines.
+fn generate_synthetic_diff(detail: &Option<String>, question: &str) -> Vec<DiffLine> {
+    let mut lines = vec![
+        DiffLine { kind: "meta".to_string(), text: format!("diff --git a/{}.rs b/{}.rs", question.split_whitespace().next().unwrap_or("file").to_lowercase(), question.split_whitespace().next().unwrap_or("file").to_lowercase()) },
+        DiffLine { kind: "meta".to_string(), text: "index 0000000..1111111 100644".to_string() },
+        DiffLine { kind: "meta".to_string(), text: "--- a/old.rs".to_string() },
+        DiffLine { kind: "meta".to_string(), text: "+++ b/new.rs".to_string() },
+    ];
+    if let Some(d) = detail {
+        for (i, sentence) in d.split_terminator('.').enumerate().take(4) {
+            let trimmed = sentence.trim();
+            if trimmed.is_empty() { continue; }
+            let kind = if i % 2 == 0 { "del" } else { "add" };
+            lines.push(DiffLine {
+                kind: kind.to_string(),
+                text: format!("- {}", trimmed),
+            });
+            lines.push(DiffLine {
+                kind: kind.to_string(),
+                text: format!("+ {}", trimmed),
+            });
+        }
+    }
+    if lines.len() == 4 {
+        // detail was empty — add a placeholder
+        lines.push(DiffLine { kind: "ctx".to_string(), text: "@@ -1,10 +1,10 @@".to_string() });
+        lines.push(DiffLine { kind: "del".to_string(), text: "- old implementation".to_string() });
+        lines.push(DiffLine { kind: "add".to_string(), text: "+ new implementation".to_string() });
+    }
+    lines
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -72,9 +104,9 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
 
     // Build diff lines from stdin or path
     let diff = if args.diff {
-        // For now, diff requires piping via stdin — we don't read it here,
-        // the caller is expected to provide it in the detail or a future field.
-        None
+        // Auto-generate a synthetic diff preview from detail text when no
+        // explicit diff is provided (e.g. via stdin or a future --diff-file).
+        Some(generate_synthetic_diff(&args.detail, &args.question))
     } else {
         None
     };

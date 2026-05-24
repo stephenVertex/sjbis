@@ -160,6 +160,7 @@ pub async fn ask(
         slots: req.slots.clone(),
         mute_key: req.mute_key.clone(),
         caller_id: req.id.clone(),
+        snooze_until: None,
     };
 
     // Apply urgency from AI router if confidence is high
@@ -280,6 +281,51 @@ pub async fn cancel(
         }
         Ok(None) => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
         Err(e) => Err(db_err(e)),
+    }
+}
+
+/// POST /snooze/:id — push notification back by N minutes (capped at deadline)
+#[derive(Deserialize)]
+pub struct SnoozeBody {
+    pub minutes: i64,
+}
+pub async fn snooze(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SnoozeBody>,
+) -> Result<Json<Notification>, (StatusCode, Json<serde_json::Value>)> {
+    // Fetch the notification first to validate
+    let notif = match state.db.get_notification(&id).await {
+        Ok(Some(n)) => n,
+        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
+        Err(e) => return Err(db_err(e)),
+    };
+
+    if notif.status != NotificationStatus::Open {
+        return Err((StatusCode::CONFLICT, Json(serde_json::json!({"error": "notification is not open"}))));
+    }
+
+    // Validate: snooze cannot extend past the auto-approve deadline
+    let now = Utc::now();
+    let proposed = now + chrono::Duration::minutes(body.minutes);
+    if let Some(deadline) = notif.deadline {
+        if proposed > deadline {
+            let remaining = (deadline - now).num_seconds();
+            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+                "error": "snooze exceeds auto-approve deadline",
+                "remaining_seconds": remaining.max(0),
+                "deadline": deadline,
+            }))));
+        }
+    }
+
+    let updated = state.db.snooze_notification(&id, body.minutes).await.map_err(db_err)?;
+    match updated {
+        Some(n) => {
+            state.broadcaster.broadcast(&SseEvent::NotificationUpdated { notification: n.clone() });
+            Ok(Json(n))
+        }
+        None => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
     }
 }
 

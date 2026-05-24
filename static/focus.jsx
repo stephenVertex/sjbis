@@ -386,7 +386,9 @@ function FileRenderer({ n, onAnswer }) {
         />
       </div>
       <div className="action-row">
-        <button className="btn-action ghost" onClick={() => onAnswer('(skipped)')}>Skip for now</button>
+        <button className="btn-action ghost" onClick={() => onAnswer('(skipped)')}>
+          Skip for now
+        </button>
       </div>
     </>
   );
@@ -398,22 +400,22 @@ function DiffRenderer({ n, onAnswer }) {
       fn: () => onAnswer('Approved') },
     { match: (e) => e.key.toLowerCase() === 'r',
       fn: () => onAnswer('Rejected') },
-    { match: (e) => e.key.toLowerCase() === 's',
-      fn: () => onAnswer('Snoozed 1h') },
   ], [n, onAnswer]);
+  const lines = n.diff || [];
   return (
     <>
       <div className="diff">
-        {n.diff.map((l, i) => (
+        {lines.length > 0 ? lines.map((l, i) => (
           <div key={i} className={`line ${l.kind}`}>{l.text}</div>
-        ))}
+        )) : (
+          <div className="line ctx" style={{ opacity: 0.7, fontStyle: 'italic' }}>
+            No diff preview provided — see full details above.
+          </div>
+        )}
       </div>
       <div className="action-row">
         <button className="btn-action danger" onClick={() => onAnswer('Rejected')}>
           Reject <span className="k">R</span>
-        </button>
-        <button className="btn-action ghost" onClick={() => onAnswer('Snoozed 1h')}>
-          Snooze 1h <span className="k">S</span>
         </button>
         <button className="btn-action primary" onClick={() => onAnswer('Approved')}>
           Approve & merge <span className="k">A · ⌘⏎</span>
@@ -548,19 +550,139 @@ const RENDERERS = {
   schedule: ScheduleRenderer,
 };
 
+// ── Snooze picker ─────────────────────────────────────────────────────────
+
+function SnoozePicker({ n, onSnooze, onClose }) {
+  const [custom, setCustom] = React.useState('');
+  const [error, setError] = React.useState(null);
+  const ref = React.useRef(null);
+
+  const deadline = n.deadline ? new Date(n.deadline).getTime() : null;
+  const now = Date.now();
+  const maxMinutes = deadline ? Math.floor((deadline - now) / 60000) : null;
+
+  const presets = [
+    { label: '5m', minutes: 5, key: '1' },
+    { label: '15m', minutes: 15, key: '2' },
+    { label: '30m', minutes: 30, key: '3' },
+    { label: '1h', minutes: 60, key: '4' },
+    { label: '4h', minutes: 240, key: '5' },
+  ];
+
+  const isDisabled = (minutes) => maxMinutes !== null && minutes > maxMinutes;
+
+  const doSnooze = (minutes) => {
+    if (isDisabled(minutes)) {
+      setError(`Cannot snooze past auto-approve deadline. Max: ${maxMinutes}m`);
+      return;
+    }
+    onSnooze(minutes);
+  };
+
+  React.useEffect(() => {
+    ref.current?.focus();
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+      const preset = presets.find((p) => p.key === e.key);
+      if (preset && !isDisabled(preset.minutes)) {
+        e.preventDefault();
+        doSnooze(preset.minutes);
+      }
+      if (e.key === 'Enter' && custom) {
+        e.preventDefault();
+        const val = parseInt(custom, 10);
+        if (val && val > 0) doSnooze(val);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [custom, onClose, onSnooze]);
+
+  return (
+    <>
+      <div className="focus-backdrop" onClick={onClose} />
+      <div className="focus snooze-overlay" style={{ '--agent': window.agentColor ? window.agentColor(n.agent_name || n.agent) : '#C7F33D' }}>
+        <div className="focus-hd">
+          <div className="meta">
+            <div className="label">Snooze — <strong>{n.question}</strong></div>
+            {maxMinutes !== null && (
+              <div className="sender">Auto-approves in {maxMinutes}m — snooze cannot exceed this</div>
+            )}
+          </div>
+          <button className="close" onClick={onClose}>✕</button>
+        </div>
+        <div className="focus-body">
+          <div className="snooze-presets">
+            {presets.map((p) => (
+              <button
+                key={p.key}
+                className={`snooze-pill ${isDisabled(p.minutes) ? 'disabled' : ''}`}
+                disabled={isDisabled(p.minutes)}
+                onClick={() => doSnooze(p.minutes)}
+              >
+                <span className="k">{p.key}</span>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="snooze-custom">
+            <input
+              ref={ref}
+              type="number"
+              min="1"
+              max={maxMinutes ?? undefined}
+              value={custom}
+              placeholder={maxMinutes ? `Custom (max ${maxMinutes}m)` : 'Custom minutes'}
+              onChange={(e) => { setCustom(e.target.value); setError(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const val = parseInt(custom, 10); if (val && val > 0) doSnooze(val); } }}
+            />
+            <button className="btn-action primary" disabled={!custom || parseInt(custom, 10) <= 0 || (maxMinutes !== null && parseInt(custom, 10) > maxMinutes)} onClick={() => doSnooze(parseInt(custom, 10))}>
+              Snooze <span className="k">⏎</span>
+            </button>
+          </div>
+          {error && <div className="snooze-error">{error}</div>}
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)', marginTop: 12 }}>
+            Press <strong>1–5</strong> for preset, type + <strong>Enter</strong> for custom, <strong>Esc</strong> to cancel
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── Focus shell ─────────────────────────────────────────────────────────
 
-function Focus({ n, onClose, onAnswer }) {
+function Focus({ n, onClose, onAnswer, onSnooze }) {
   const nn = normalizeNotif(n);
   const agent = window.AGENTS ? (window.AGENTS[nn.agent] || { glyph: '◐', name: nn.agent }) : { glyph: '◐', name: nn.agent };
   const Renderer = RENDERERS[nn.type] || AckRenderer;
   const color = window.agentColor ? window.agentColor(nn.agent) : '#C7F33D';
+  const [snoozing, setSnoozing] = React.useState(false);
 
   React.useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { if (snoozing) { setSnoozing(false); } else { onClose(); } }
+      if (!snoozing && e.key.toLowerCase() === 's') {
+        // Don't trigger snooze if typing in an input/textarea
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+        e.preventDefault();
+        setSnoozing(true);
+      }
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, snoozing]);
+
+  if (snoozing) {
+    return (
+      <SnoozePicker
+        n={n}
+        onSnooze={(minutes) => { setSnoozing(false); onSnooze(minutes); }}
+        onClose={() => setSnoozing(false)}
+      />
+    );
+  }
 
   return (
     <>

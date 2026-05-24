@@ -112,14 +112,32 @@ impl Db {
     }
 
     pub async fn list_open_notifications(&self) -> Result<Vec<Notification>> {
+        let now = Utc::now();
         let rows = sqlx::query(
-            "SELECT * FROM notifications WHERE status = 'open' ORDER BY urgency DESC, created_at DESC",
+            "SELECT * FROM notifications WHERE status = 'open' AND (snooze_until IS NULL OR snooze_until <= $1) ORDER BY urgency DESC, created_at DESC",
         )
+        .bind(now)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
             .map(|r| Self::row_to_notification(r))
             .collect::<Result<Vec<_>>>()
+    }
+
+    pub async fn snooze_notification(&self, id: &str, minutes: i64) -> Result<Option<Notification>> {
+        let now = Utc::now();
+        let row = sqlx::query(
+            "UPDATE notifications SET snooze_until = LEAST($1 + ($2 * INTERVAL '1 minute'), COALESCE(deadline, $1 + ($2 * INTERVAL '1 minute'))) WHERE id = $3 RETURNING *"
+        )
+        .bind(now)
+        .bind(minutes)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        match row {
+            Some(row) => Ok(Some(Self::row_to_notification(&row)?)),
+            None => Ok(None),
+        }
     }
 
     pub async fn list_history(&self, limit: usize) -> Result<Vec<Notification>> {
@@ -356,6 +374,7 @@ impl Db {
             slots,
             mute_key: row.try_get("mute_key")?,
             caller_id: row.try_get("caller_id")?,
+            snooze_until: row.try_get("snooze_until").ok(),
         })
     }
 
