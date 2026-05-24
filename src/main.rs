@@ -1,6 +1,7 @@
 mod cli;
 mod daemon;
 mod db;
+mod entities;
 mod handlers;
 mod models;
 mod router;
@@ -84,10 +85,108 @@ async fn main() -> Result<()> {
         cli::Commands::Wait { id } => cmd_wait(id).await,
         cli::Commands::Status { id } => cmd_status(id).await,
         cli::Commands::Rule { command } => cmd_rule(command).await,
+        cli::Commands::Entity { command } => cmd_entity(command),
         cli::Commands::Daemon { command } => cmd_daemon(command).await,
         cli::Commands::Prime => cmd_prime().await,
         cli::Commands::Register { agent_name, glyph, color } => cmd_register(agent_name, glyph, color).await,
     }
+}
+
+fn cmd_entity(command: cli::EntityCommands) -> Result<()> {
+    let config_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+        .join(".config/sjbis/entities.toml");
+    let _ = std::fs::create_dir_all(config_path.parent().unwrap());
+
+    let mut toml_value = if config_path.exists() {
+        std::fs::read_to_string(&config_path)
+            .ok()
+            .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+            .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()))
+    } else {
+        toml::Value::Table(toml::map::Map::new())
+    };
+
+    // Ensure top-level is a table
+    if !toml_value.is_table() {
+        toml_value = toml::Value::Table(toml::map::Map::new());
+    }
+
+    // Ensure "groups" key exists
+    let table = toml_value.as_table_mut().unwrap();
+    if !table.contains_key("groups") {
+        table.insert("groups".to_string(), toml::Value::Table(toml::map::Map::new()));
+    }
+
+    let groups = table.get_mut("groups").unwrap().as_table_mut().unwrap();
+
+    match command {
+        cli::EntityCommands::Add { name, members } => {
+            let arr: Vec<toml::Value> = members.iter().map(|m| toml::Value::String(m.clone())).collect();
+            groups.insert(name.clone(), toml::Value::Array(arr));
+            let content = toml::to_string_pretty(&toml_value)?;
+            std::fs::write(&config_path, content)?;
+            println!("Created group '{}' with {} member(s)", name, members.len());
+            println!("Config saved to {}", config_path.display());
+        }
+        cli::EntityCommands::List => {
+            if groups.is_empty() {
+                println!("No entity groups defined.");
+                println!("Create one with: sjbis entity add <name> <member1> <member2> ...");
+                return Ok(());
+            }
+            for (name, val) in groups.iter() {
+                let count = val.as_array().map(|a| a.len()).unwrap_or(0);
+                println!("  {} ({} member{})", name, count, if count == 1 { "" } else { "s" });
+            }
+        }
+        cli::EntityCommands::Show { name } => {
+            let key = name.to_lowercase();
+            let found = groups.iter().find(|(k, _)| k.to_lowercase() == key);
+            if let Some((actual_name, val)) = found {
+                let members: Vec<String> = val.as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                    .unwrap_or_default();
+                println!("Group: {}", actual_name);
+                for m in members {
+                    println!("  - {}", m);
+                }
+            } else {
+                anyhow::bail!("Group '{}' not found", name);
+            }
+        }
+        cli::EntityCommands::Rm { name, member } => {
+            let key = name.to_lowercase();
+            let actual_key = groups.keys().find(|k| k.to_lowercase() == key).cloned();
+            if let Some(actual_key) = actual_key {
+                if let Some(member_name) = member {
+                    // Remove specific member
+                    if let Some(arr) = groups.get_mut(&actual_key).and_then(|v| v.as_array_mut()) {
+                        let before = arr.len();
+                        arr.retain(|v| v.as_str().map_or(true, |s| s.to_lowercase() != member_name.to_lowercase()));
+                        let after = arr.len();
+                        if after == before {
+                            anyhow::bail!("Member '{}' not found in group '{}'", member_name, actual_key);
+                        }
+                        if arr.is_empty() {
+                            groups.remove(&actual_key);
+                            println!("Removed last member — deleted group '{}'", actual_key);
+                        } else {
+                            println!("Removed '{}' from '{}' ({} members remaining)", member_name, actual_key, after);
+                        }
+                    }
+                } else {
+                    // Remove entire group
+                    groups.remove(&actual_key);
+                    println!("Deleted group '{}'", actual_key);
+                }
+                let content = toml::to_string_pretty(&toml_value)?;
+                std::fs::write(&config_path, content)?;
+            } else {
+                anyhow::bail!("Group '{}' not found", name);
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
@@ -543,19 +642,40 @@ DASHBOARD
   Open http://localhost:7878 in a browser. Click cards to answer.
   Keyboard: J/K navigate, Enter open, 1-9 answer.
 
+ENTITY GROUPS (named contact lists for rules)
+  Define reusable groups in ~/.config/sjbis/entities.toml:
+    [groups]
+    family = ["Jeff", "Carmen", "Mom"]
+    work   = ["boss", "team-lead"]
+
+  sjbis entity list             Show all groups
+  sjbis entity show family      Show members of a group
+  sjbis entity add family Jeff Carmen Mom
+  sjbis entity rm family --member Jeff
+  sjbis entity rm family        Delete entire group
+
 RULES (filtering / muting / allow-lists)
   Rules are evaluated in priority order (highest applied last, can override).
   Time-bounded rules auto-expire and disappear from the active list.
 
   sjbis rule list               Show active rules with time remaining
-  sjbis rule add "mute all iMessage" --priority 10 --expires 1h
-  sjbis rule add "surface iMessage from Jeff" --priority 20 --expires 1h
-  sjbis rule allow --agent iMessage --from "Jeff,Carmen,JCS-Central" --for-duration 1h
   sjbis rule rm r-abc123        Remove a rule by id
 
-  Natural language patterns that compile automatically:
-    "allow <agent> from <contact1, contact2> for <duration>"
-    Creates a mute-all + surface-exceptions ruleset.
+  Natural language — no syntax to memorize. The compiler handles:
+    "mute all iMessage"                     → mutes everything from iMessage
+    "mute everyone"                       → mutes all agents (global DND)
+    "mute iMessage except family for 1h"  → only family gets through
+    "only allow Signal from family"         → blocks all Signal except family
+    "urgent only"                         → only urgency 4+ surfaces
+    "auto-ack iMessage"                     → dismiss without answering
+    "reprioritize iMessage to urgent"     → bump urgency to 4
+
+  Entity groups expand automatically — "family" becomes Jeff, Carmen, Mom, Dad.
+  The simple compiler handles common patterns instantly (offline, zero latency).
+  For novel phrasing the AI compiler falls back to the LLM if FIREWORKS_API_KEY is set.
+
+  Explicit allow-list (same as "only allow ..."):
+    sjbis rule allow --agent iMessage --from "Jeff,Carmen,JCS-Central" --for-duration 1h
 
 LIST / STATUS / CANCEL / DISMISS
   sjbis list                    Show open notifications

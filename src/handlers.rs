@@ -436,15 +436,88 @@ pub async fn create_rule(
         body.expires_at.clone()
     };
 
+    let entities = crate::entities::EntityGroups::load();
     let mut created = Vec::new();
 
-    // Check if this is an "allow list" pattern: "only allow X from Y for Z"
+    // ── Phase 1: Try deterministic simple compiler ────────────────────────
+    let (simple_compiled, simple_duration) = crate::rules::compile(&body.text, &entities)
+        .unwrap_or((serde_json::Value::Null, None));
+
+    // If the simple compiler recognized a "mute all except" pattern, handle it
+    // by generating mute-all + surface-exceptions rules.
+    // We detect this by checking if the text contains "except"/"but" after "mute".
     let lower = body.text.to_lowercase();
-    if lower.starts_with("only allow ") || lower.starts_with("allow ") {
+    let is_mute_except = lower.contains("mute") &&
+        (lower.contains(" except ") || lower.contains(" but ") || lower.contains(" other than "));
+
+    if is_mute_except {
+        if let Some((agent, contacts)) = crate::rules::parse_mute_except_text(&body.text, &entities) {
+            let duration = simple_duration
+                .as_deref()
+                .and_then(|d| crate::models::parse_deadline(d).ok())
+                .or(expires);
+
+            // Create mute-all rule (low priority)
+            let mute_rule = Rule {
+                id: format!("r-{}", nanoid::nanoid!(6)),
+                text: format!("mute all {} (auto-created by exception list)", agent),
+                compiled: Some(serde_json::json!({
+                    "action": "mute",
+                    "match": { "agent": &agent }
+                })),
+                active: true,
+                scope: Some(agent.clone()),
+                urgency_min: 0,
+                mute: true,
+                priority: body.priority.unwrap_or(10),
+                expires_at: duration,
+                active_window: None,
+                created_at: now,
+            };
+            state.db.insert_rule(&mute_rule).await.map_err(db_err)?;
+            state.broadcaster.broadcast(&SseEvent::RuleCreated { rule: mute_rule.clone() });
+            created.push(mute_rule);
+
+            // Create surface rules for each exception (high priority, overrides mute)
+            for contact in contacts {
+                let contact_clean = contact.trim().to_string();
+                if contact_clean.is_empty() { continue; }
+                let surface_rule = Rule {
+                    id: format!("r-{}", nanoid::nanoid!(6)),
+                    text: format!("surface {} from {} (exception)", agent, contact_clean),
+                    compiled: Some(serde_json::json!({
+                        "action": "surface",
+                        "match": {
+                            "agent": &agent,
+                            "source_contains": [contact_clean]
+                        }
+                    })),
+                    active: true,
+                    scope: Some(agent.clone()),
+                    urgency_min: 0,
+                    mute: false,
+                    priority: body.priority.unwrap_or(20),
+                    expires_at: duration,
+                    active_window: None,
+                    created_at: now,
+                };
+                state.db.insert_rule(&surface_rule).await.map_err(db_err)?;
+                state.broadcaster.broadcast(&SseEvent::RuleCreated { rule: surface_rule.clone() });
+                created.push(surface_rule);
+            }
+
+            return Ok(Json(created));
+        }
+    }
+
+    // ── Phase 2: "only allow" / "allow from" patterns ──────────────────────
+    if lower.starts_with("only allow ") || lower.starts_with("allow ") || lower.starts_with("only ") {
         let rest = if lower.starts_with("only allow ") {
             &body.text[11..]
-        } else {
+        } else if lower.starts_with("allow ") {
             &body.text[6..]
+        } else {
+            &body.text[5..] // "only "
         };
         let rest_lower = rest.to_lowercase();
 
@@ -452,7 +525,6 @@ pub async fn create_rule(
             let agent = rest[..from_idx].trim().to_string();
             let after_from = rest[from_idx + 6..].trim();
 
-            // Check for "for <duration>" at the end
             let (contacts_str, duration_str) = if let Some(for_idx) = after_from.to_lowercase().rfind(" for ") {
                 (&after_from[..for_idx], Some(&after_from[for_idx + 5..]))
             } else {
@@ -460,7 +532,16 @@ pub async fn create_rule(
             };
 
             let contacts = crate::rules::parse_contacts(contacts_str);
-            if !contacts.is_empty() && !agent.is_empty() {
+            let expanded: Vec<String> = contacts.iter()
+                .flat_map(|c| entities.expand(c))
+                .collect();
+
+            if !expanded.is_empty() && !agent.is_empty() {
+                let duration = duration_str
+                    .and_then(|d| crate::models::parse_deadline(d).ok())
+                    .or(simple_duration.as_deref().and_then(|d| crate::models::parse_deadline(d).ok()))
+                    .or(expires);
+
                 // Create mute-all rule (low priority)
                 let mute_rule = Rule {
                     id: format!("r-{}", nanoid::nanoid!(6)),
@@ -474,7 +555,7 @@ pub async fn create_rule(
                     urgency_min: 0,
                     mute: true,
                     priority: body.priority.unwrap_or(10),
-                    expires_at: duration_str.and_then(|d| crate::models::parse_deadline(d).ok()).or(expires),
+                    expires_at: duration,
                     active_window: None,
                     created_at: now,
                 };
@@ -483,7 +564,7 @@ pub async fn create_rule(
                 created.push(mute_rule);
 
                 // Create surface rules for each contact (high priority, overrides mute)
-                for contact in contacts {
+                for contact in expanded {
                     let contact_clean = contact.trim().to_string();
                     if contact_clean.is_empty() { continue; }
                     let surface_rule = Rule {
@@ -501,7 +582,7 @@ pub async fn create_rule(
                         urgency_min: 0,
                         mute: false,
                         priority: body.priority.unwrap_or(20),
-                        expires_at: duration_str.and_then(|d| crate::models::parse_deadline(d).ok()).or(expires),
+                        expires_at: duration,
                         active_window: None,
                         created_at: now,
                     };
@@ -515,8 +596,40 @@ pub async fn create_rule(
         }
     }
 
-    // Single rule compilation
-    let compiled = body.compiled.clone().or_else(|| crate::rules::compile(&body.text));
+    // ── Phase 3: Single rule from simple compiler ──────────────────────────
+    if !simple_compiled.is_null() {
+        let duration = simple_duration
+            .as_deref()
+            .and_then(|d| crate::models::parse_deadline(d).ok())
+            .or(expires);
+
+        let rule = Rule {
+            id: format!("r-{}", nanoid::nanoid!(6)),
+            text: body.text.clone(),
+            compiled: Some(simple_compiled),
+            active: true,
+            scope: body.scope.clone(),
+            urgency_min: body.urgency_min.unwrap_or(0),
+            mute: body.mute.unwrap_or(false),
+            priority: body.priority.unwrap_or(0),
+            expires_at: duration,
+            active_window: None,
+            created_at: now,
+        };
+
+        state.db.insert_rule(&rule).await.map_err(db_err)?;
+        state.broadcaster.broadcast(&SseEvent::RuleCreated { rule: rule.clone() });
+        created.push(rule);
+        return Ok(Json(created));
+    }
+
+    // ── Phase 4: AI fallback ───────────────────────────────────────────────
+    let agents = state.db.list_agents().await.map_err(db_err)?;
+    let compiled = if let Some(ref router) = *state.router {
+        router.compile_rule(&body.text, now, &agents).await.ok()
+    } else {
+        None
+    };
 
     let rule = Rule {
         id: format!("r-{}", nanoid::nanoid!(6)),

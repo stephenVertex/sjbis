@@ -46,6 +46,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: RuleCommands,
     },
+    /// Manage entity groups (named contact lists for rules)
+    Entity {
+        #[command(subcommand)]
+        command: EntityCommands,
+    },
     /// Daemon lifecycle
     Daemon {
         #[command(subcommand)]
@@ -101,6 +106,32 @@ pub enum RuleCommands {
     Rm {
         /// Rule id to remove
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EntityCommands {
+    /// Create or replace an entity group
+    Add {
+        /// Group name (e.g. family, work_team)
+        name: String,
+        /// Members (space-separated names, numbers, or handles)
+        members: Vec<String>,
+    },
+    /// List all entity groups
+    List,
+    /// Show members of a specific group
+    Show {
+        /// Group name
+        name: String,
+    },
+    /// Remove a group or a member from a group
+    Rm {
+        /// Group name
+        name: String,
+        /// Optional member to remove (omit to delete entire group)
+        #[arg(long)]
+        member: Option<String>,
     },
 }
 
