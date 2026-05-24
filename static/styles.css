@@ -497,51 +497,61 @@ button { font-family: inherit; }
 }
 .card.u5 .q { font-size: 22px; }
 
-.card .type-pill {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-  display: inline-flex; align-items: center; gap: 6px;
+.card .card-meta {
   margin-top: auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 18px;
 }
-.card .type-pill .ic {
-  display: inline-block; width: 14px; height: 14px;
-  color: var(--ink-3);
-}
-
-.card .deadline {
-  position: absolute;
-  bottom: 14px; right: 14px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--ink-3);
-  display: flex; align-items: center; gap: 4px;
-}
-.card.u4 .deadline, .card.u5 .deadline { color: var(--hot); }
 
 .card .src {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.04em;
-  color: var(--ink-4);
+  color: var(--ink-2);
   white-space: nowrap;
-  max-width: 60%;
+  max-width: 80%;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: center;
   pointer-events: none;
 }
 .card .src b {
-  color: var(--ink-3);
-  font-weight: 500;
-  margin-right: 4px;
+  color: var(--lime);
+  font-weight: 600;
+  margin-right: 6px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
 }
+
+.card .card-ft {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.card .type-pill {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.card .type-pill .ic {
+  display: inline-block; width: 14px; height: 14px;
+  color: var(--lime);
+}
+
+.card .deadline {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  display: flex; align-items: center; gap: 4px;
+}
+.card.u4 .deadline, .card.u5 .deadline { color: var(--hot); }
 
 .card .preview-row {
   display: flex; flex-wrap: wrap; gap: 4px;

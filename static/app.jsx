@@ -109,17 +109,21 @@ function NotificationCard({ n, onClick, agents, selected, cardRef }) {
           {n.choices.length > 3 && <span className="preview-chip">+{n.choices.length - 3}</span>}
         </div>
       )}
-      <div className="type-pill">
-        <span className="ic">{TYPE_ICONS[n.question_type] || TYPE_ICONS[n.type] || '·'}</span>
-        {window.TYPE_LABEL[n.question_type || n.type] || n.question_type || n.type}
+      <div className="card-meta">
+        {n.src && (
+          <div className="src" title={`SRC: ${n.src}`}>
+            <b>SRC</b>{n.src}
+          </div>
+        )}
       </div>
-      {n.src && (
-        <div className="src" title={`SRC: ${n.src}`}>
-          <b>SRC:</b>{n.src}
+      <div className="card-ft">
+        <div className="type-pill">
+          <span className="ic">{TYPE_ICONS[n.question_type] || TYPE_ICONS[n.type] || '·'}</span>
+          {window.TYPE_LABEL[n.question_type || n.type] || n.question_type || n.type}
         </div>
-      )}
-      <div className="deadline">
-        {n.deadline ? `⏱ ${Math.floor((new Date(n.deadline) - Date.now()) / 60000)}m` : window.fmtSentAt(n.sentAt || n.created_at)}
+        <div className="deadline">
+          {n.deadline ? `⏱ ${Math.floor((new Date(n.deadline) - Date.now()) / 60000)}m` : window.fmtSentAt(n.sentAt || n.created_at)}
+        </div>
       </div>
     </div>
   );
