@@ -716,7 +716,16 @@ function Focus({ n, onClose, onAnswer, onSnooze }) {
         </div>
         <div className="focus-body">
           <h2 className="focus-q">{nn.question}</h2>
-          {nn.detail && <p className="focus-detail">{nn.detail}</p>}
+          {nn.detail && (
+            <p className="focus-detail">
+              {nn.detail.split('\n').map((line, i) => (
+                <span key={i}>
+                  {line}
+                  {i < nn.detail.split('\n').length - 1 && <br />}
+                </span>
+              ))}
+            </p>
+          )}
           <Renderer n={nn} onAnswer={handleAnswer} />
           <div className="note-composer">
             {showNote ? (

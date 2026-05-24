@@ -709,9 +709,16 @@ button { font-family: inherit; }
 .focus-detail {
   font-size: 15px;
   color: var(--ink-2);
-  line-height: 1.5;
+  line-height: 1.6;
   max-width: 720px;
   text-wrap: pretty;
+  white-space: pre-wrap;
+  margin-top: 8px;
+}
+.focus-detail br + br {
+  display: block;
+  content: '';
+  margin-top: 0.6em;
 }
 
 /* ── Question type renderers ───────────────────────────────────────────── */
