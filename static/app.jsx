@@ -204,7 +204,8 @@ function CommandBar({ onAddRule }) {
       if (Array.isArray(created)) {
         // Server returned multiple rules
         const newRules = created.map((r) => ({ ...r, active: true }));
-        setRules((prev) => [...newRules, ...prev.filter((p) => !newRules.find((n) => n.id === p.id)))]);
+        const newIds = new Set(newRules.map((r) => r.id));
+        setRules((prev) => [...newRules, ...prev.filter((p) => !newIds.has(p.id))]);
       } else {
         setRules((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
       }
