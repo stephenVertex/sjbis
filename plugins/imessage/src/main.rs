@@ -74,6 +74,7 @@ struct DedupKey {
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 struct DedupCache {
     seen: HashSet<DedupKey>,
     window_secs: u64,
@@ -235,18 +236,23 @@ async fn run_test_jxa(minutes: i64) -> Result<()> {
 async fn run_daemon() -> Result<()> {
     info!("SJBIS iMessage Plugin starting...");
 
+    // Only surface messages received after this moment.
+    // Prevents old messages from being fetched on first observer poll (JXA fetches last 5m).
+    let startup_time = Utc::now();
+    info!("Startup time: {} — only messages after this will surface", startup_time);
+
     let config = Config::default();
     let dedup = DedupCache::new(config.dedup_window_secs);
 
     if config.enable_db_poller {
         info!("DB poller enabled");
-        tokio::spawn(db_poller_task(config.clone(), dedup));
+        tokio::spawn(db_poller_task(config.clone(), dedup.clone(), startup_time));
     }
 
     if config.enable_notification_observer {
         info!("Notification observer enabled (macOS only)");
         #[cfg(target_os = "macos")]
-        tokio::spawn(notification_observer_task(config.clone()));
+        tokio::spawn(notification_observer_task(config.clone(), dedup, startup_time));
         #[cfg(not(target_os = "macos"))]
         warn!("Notification observer only works on macOS");
     }
@@ -294,9 +300,9 @@ async fn run_test(minutes: i64) -> Result<()> {
     Ok(())
 }
 
-async fn db_poller_task(config: Config, mut dedup: DedupCache) {
+async fn db_poller_task(config: Config, mut dedup: DedupCache, startup_time: DateTime<Utc>) {
     let mut ticker = interval(Duration::from_secs(config.poll_interval_secs));
-    let mut last_check = Utc::now();
+    let mut last_check = startup_time;
 
     loop {
         ticker.tick().await;
@@ -305,6 +311,13 @@ async fn db_poller_task(config: Config, mut dedup: DedupCache) {
             Ok(messages) => {
                 last_check = Utc::now();
                 for msg in messages {
+                    // Skip messages that arrived before the binary started
+                    if msg.date < startup_time {
+                        debug!("Message from {} predates startup ({} < {}), skipping",
+                            msg.handle, msg.date, startup_time);
+                        continue;
+                    }
+
                     if dedup.is_duplicate(&msg.handle, &msg.text) {
                         debug!("Duplicate message, skipping");
                         continue;
@@ -339,19 +352,27 @@ async fn db_poller_task(config: Config, mut dedup: DedupCache) {
 }
 
 #[cfg(target_os = "macos")]
-async fn notification_observer_task(config: Config) {
+async fn notification_observer_task(config: Config, mut dedup: DedupCache, startup_time: DateTime<Utc>) {
     info!("Starting AppleScript notification poller...");
     let rx = observer::start_applescript_poller();
-    let mut dedup = DedupCache::new(config.dedup_window_secs);
 
     loop {
         match rx.recv_timeout(Duration::from_secs(30)) {
             Ok(_ping) => {
                 debug!("Notification poller triggered, checking for new messages");
-                // Poll recent messages via AppleScript as fallback
-                            match jxa::fetch_via_jxa(5).await {
-                                Ok(messages) => {
+                // Poll recent messages via AppleScript as fallback.
+                // JXA fetches last 5 minutes, so we MUST filter against startup_time
+                // to avoid surfacing old messages that predate the binary.
+                match jxa::fetch_via_jxa(5).await {
+                    Ok(messages) => {
                         for msg in messages {
+                            // Skip messages that arrived before the binary started
+                            if msg.date < startup_time {
+                                debug!("Message from {} predates startup ({} < {}), skipping",
+                                    msg.handle, msg.date, startup_time);
+                                continue;
+                            }
+
                             if dedup.is_duplicate(&msg.handle, &msg.text) {
                                 continue;
                             }
@@ -385,7 +406,7 @@ async fn notification_observer_task(config: Config) {
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn notification_observer_task(_config: Config) {
+async fn notification_observer_task(_config: Config, _dedup: DedupCache, _startup_time: DateTime<Utc>) {
     warn!("Notification observer only available on macOS");
     loop {
         sleep(Duration::from_secs(60)).await;
