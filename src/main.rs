@@ -570,14 +570,48 @@ STARTING THE DAEMON (localhost)
   sjbis daemon start --port 7878 --background
 
 DEPLOYMENT (server with systemd)
-  Cross-compile static binary (macOS → Linux x86_64):
-    cargo zigbuild --target x86_64-unknown-linux-musl --release
-  Copy to server, create ~/.config/sjbis/database.toml, then:
-    systemctl --user enable sjbis
-    systemctl --user start sjbis
-    systemctl --user status sjbis
-    systemctl --user restart sjbis
-    systemctl --user stop sjbis
+
+  1. Build fully static binary (zero runtime deps, runs on any Linux):
+       cargo zigbuild --target x86_64-unknown-linux-musl --release
+     Binary: target/x86_64-unknown-linux-musl/release/sjbis (~7.8MB)
+
+  2. On the server:
+       mkdir -p ~/sjbis ~/.config/sjbis
+       scp sjbis server:~/sjbis/
+       rsync -av static/ server:~/sjbis/static/
+       cat > ~/.config/sjbis/database.toml << 'TOML'
+       [database]
+       dsn = "postgresql://user:pass@host:5432/sjbis"
+       TOML
+
+  3. Create ~/.config/systemd/user/sjbis.service:
+       [Unit]
+       Description=SJBIS
+       After=network-online.target
+       Wants=network-online.target
+
+       [Service]
+       Type=simple
+       WorkingDirectory=%h/sjbis
+       ExecStart=%h/sjbis/sjbis daemon start --port 7878
+       Restart=on-failure
+       RestartSec=5
+
+       [Install]
+       WantedBy=default.target
+
+  4. Enable and start:
+       systemctl --user daemon-reload
+       systemctl --user enable sjbis
+       systemctl --user start sjbis
+
+  5. Management:
+       systemctl --user status sjbis     # health check
+       systemctl --user restart sjbis    # restart (e.g. after upgrade)
+       systemctl --user stop sjbis       # stop
+       journalctl --user -u sjbis -f     # follow logs
+
+     The service auto-starts on user login and auto-restarts on crash.
 
 POSTING A QUESTION (fire-and-forget)
   sjbis ask --question "Deploy to prod?" --yesno --agent-name deploybot
