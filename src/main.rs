@@ -565,9 +565,19 @@ async fn cmd_prime() -> Result<()> {
   from agents (scripts, tools, AI systems). Agents post questions via
   the CLI. The daemon must be running first.
 
-STARTING THE DAEMON
+STARTING THE DAEMON (localhost)
   sjbis daemon start --port 7878
   sjbis daemon start --port 7878 --background
+
+DEPLOYMENT (server with systemd)
+  Cross-compile static binary (macOS → Linux x86_64):
+    cargo zigbuild --target x86_64-unknown-linux-musl --release
+  Copy to server, create ~/.config/sjbis/database.toml, then:
+    systemctl --user enable sjbis
+    systemctl --user start sjbis
+    systemctl --user status sjbis
+    systemctl --user restart sjbis
+    systemctl --user stop sjbis
 
 POSTING A QUESTION (fire-and-forget)
   sjbis ask --question "Deploy to prod?" --yesno --agent-name deploybot
