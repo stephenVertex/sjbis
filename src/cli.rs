@@ -273,9 +273,32 @@ impl AskArgs {
     }
 }
 
-/// Resolve the daemon base URL from env, arg, or default
+/// Load daemon URL from ~/.config/sjbis/daemon.toml (or platform config dir)
+pub fn load_daemon_url() -> Option<String> {
+    let candidates = [
+        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+            .join(".config/sjbis/daemon.toml"),
+        dirs::config_dir()
+            .unwrap_or_else(|| std::env::temp_dir())
+            .join("sjbis/daemon.toml"),
+    ];
+
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                if let Some(url) = config.get("url").and_then(|v| v.as_str()) {
+                    return Some(url.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the daemon base URL from arg, env, config file, or default
 pub fn daemon_url(arg: Option<String>) -> String {
     arg.or_else(|| std::env::var("SJBIS_DAEMON").ok())
+        .or_else(load_daemon_url)
         .unwrap_or_else(|| "http://localhost:7878".to_string())
 }
 

@@ -68,11 +68,12 @@ cargo run -- run
    ```
    Checks messages in all spaces for question-like content.
 
-3. **Surfaces** via `sjbis ask`:
+3. **Surfaces** via HTTP POST to the SJBIS daemon:
    ```bash
-   sjbis ask --question "..." --yesno --blocking \
-     --agent-name Gog --instance "profile · sender"
+   POST http://dertog:7878/ask
+   {"question": "...", "agent_name": "Gog", "instance": "profile · sender", "blocking": true}
    ```
+   Then blocks on `GET /wait/{id}` until you answer on the dashboard.
 
 4. **Sends reply** when you answer:
    ```bash
@@ -92,6 +93,23 @@ gog --client=work auth login
 The plugin auto-detects all profiles and polls each one independently.
 
 ## Configuration
+
+### Daemon URL
+
+The plugin reads the daemon URL from `~/.config/sjbis/daemon.toml`:
+
+```toml
+url = "http://dertog:7878"
+```
+
+Create this file so the plugin knows where to POST notifications:
+
+```bash
+mkdir -p ~/.config/sjbis
+echo 'url = "http://dertog:7878"' > ~/.config/sjbis/daemon.toml
+```
+
+### Other options
 
 Edit `Config::default()` in `src/main.rs` to customize:
 - `poll_interval_secs`: How often to poll (default: 60s)

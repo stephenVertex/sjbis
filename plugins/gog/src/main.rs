@@ -22,7 +22,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run the full daemon (polls Gmail and Chat, surfaces questions)
-    Run,
+    Run {
+        /// Gog profile(s) to use (default: auto-detect all)
+        #[arg(long)]
+        profile: Vec<String>,
+    },
     /// Test Gmail connectivity and show what would be surfaced
     TestGmail {
         /// Gog profile to use (default: first available)
@@ -39,7 +43,7 @@ enum Commands {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
-    sjbis_binary: String,
+    daemon_url: String,
     gog_binary: String,
     /// Poll interval in seconds
     poll_interval_secs: u64,
@@ -61,8 +65,12 @@ fn default_true() -> bool { true }
 
 impl Default for Config {
     fn default() -> Self {
+        // Load daemon URL from config file if available
+        let daemon_url = load_daemon_url_from_config()
+            .unwrap_or_else(|| "http://localhost:7878".to_string());
+
         Self {
-            sjbis_binary: "sjbis".to_string(),
+            daemon_url,
             gog_binary: "gog".to_string(),
             poll_interval_secs: 60,
             dedup_window_secs: 300,
@@ -72,6 +80,28 @@ impl Default for Config {
             enable_chat: true,
         }
     }
+}
+
+/// Load daemon URL from ~/.config/sjbis/daemon.toml
+fn load_daemon_url_from_config() -> Option<String> {
+    let candidates = [
+        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+            .join(".config/sjbis/daemon.toml"),
+        dirs::config_dir()
+            .unwrap_or_else(|| std::env::temp_dir())
+            .join("sjbis/daemon.toml"),
+    ];
+
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                if let Some(url) = config.get("url").and_then(|v| v.as_str()) {
+                    return Some(url.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// A dedup cache that prevents surfacing the same message twice within a window.
@@ -153,42 +183,51 @@ async fn fetch_gmail_threads(config: &Config, profile: &str) -> Result<Vec<Gmail
     let result = gog_json(config, profile, &[
         "gmail", "search",
         "is:unread newer_than:1d",
-        "--max-results", "10",
+        "--max", "10",
     ]).await?;
 
     let mut threads = Vec::new();
 
-    if let Some(items) = result.get("threads").and_then(|v| v.as_array()) {
-        for item in items {
-            let id = item.get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            if id.is_empty() { continue; }
+    // gog returns a JSON array of threads directly
+    let items = if result.is_array() {
+        result.as_array().cloned().unwrap_or_default()
+    } else {
+        result.get("threads")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default()
+    };
 
-            let snippet = item.get("snippet")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+    for item in items {
+        let id = item.get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if id.is_empty() { continue; }
 
-            // Get thread details for subject/from
-            let thread_detail = match fetch_gmail_thread_detail(config, profile, &id).await {
-                Ok(d) => d,
-                Err(e) => {
-                    debug!("Failed to fetch thread detail {}: {}", id, e);
-                    continue;
-                }
-            };
+        let snippet = item.get("snippet")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-            threads.push(GmailThread {
-                id,
-                snippet,
-                subject: thread_detail.0,
-                from: thread_detail.1,
-                date: Utc::now(), // gog doesn't expose precise date easily
-                profile: profile.to_string(),
-            });
-        }
+        let subject = item.get("subject")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let from = item.get("from")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        threads.push(GmailThread {
+            id,
+            snippet,
+            subject,
+            from,
+            date: Utc::now(), // gog doesn't expose precise date easily
+            profile: profile.to_string(),
+        });
     }
 
     Ok(threads)
@@ -199,7 +238,7 @@ async fn fetch_gmail_thread_detail(config: &Config, profile: &str, thread_id: &s
     let result = gog_json(config, profile, &[
         "gmail", "search",
         &format!("thread:{}", thread_id),
-        "--max-results", "1",
+        "--max", "1",
     ]).await?;
 
     let subject = result.get("threads")
@@ -273,7 +312,6 @@ async fn fetch_chat_messages(config: &Config, profile: &str) -> Result<Vec<ChatM
         // Fetch messages for this space
         let msg_result = gog_json(config, profile, &[
             "chat", "messages", "list", &space_name,
-            "--page-size", "10",
         ]).await?;
 
         if let Some(items) = msg_result.get("messages").and_then(|v| v.as_array()) {
@@ -310,46 +348,71 @@ async fn fetch_chat_messages(config: &Config, profile: &str) -> Result<Vec<ChatM
     Ok(messages)
 }
 
-/// Surface a question via sjbis CLI
+/// Surface a question via HTTP POST to the SJBIS daemon
 async fn surface_question(
-    sjbis_binary: &str,
+    daemon_url: &str,
     agent_name: &str,
     profile: &str,
     source: &str,
     question: &str,
     detail: &str,
 ) -> Result<Option<String>> {
-    let mut cmd = Command::new(sjbis_binary);
-    cmd.arg("ask")
-        .arg("--question")
-        .arg(question)
-        .arg("--yesno")
-        .arg("--blocking")
-        .arg("--json")
-        .arg("--agent-name")
-        .arg(agent_name)
-        .arg("--instance")
-        .arg(format!("{} · {}", profile, source))
-        .arg("--detail")
-        .arg(detail)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let client = reqwest::Client::new();
+    
+    let body = serde_json::json!({
+        "question": question,
+        "agent_name": agent_name,
+        "instance": format!("{} · {}", profile, source),
+        "detail": detail,
+        "blocking": true,
+        "question_type": "yesno",
+    });
 
-    let output = cmd.output().await.context("Failed to run sjbis ask")?;
+    let response = client
+        .post(format!("{}/ask", daemon_url))
+        .json(&body)
+        .send()
+        .await
+        .with_context(|| format!("Failed to POST to {}/ask", daemon_url))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("sjbis ask failed: {}", stderr);
-        return Err(anyhow::anyhow!("sjbis ask failed: {}", stderr));
+    if !response.status().is_success() {
+        let err_text = response.text().await.unwrap_or_default();
+        anyhow::bail!("POST /ask failed: {}", err_text);
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let response: serde_json::Value = serde_json::from_str(&stdout)
-        .context("Failed to parse sjbis response")?;
+    let notification: serde_json::Value = response.json().await
+        .context("Failed to parse notification response")?;
+    
+    let id = notification.get("id")
+        .and_then(|v| v.as_str())
+        .context("No id in notification response")?;
 
-    let answer = response.get("answer")
+    info!("Surfaced notification {}, waiting for answer...", id);
+
+    // Block on GET /wait/{id}
+    let wait_response = client
+        .get(format!("{}/wait/{}", daemon_url, id))
+        .send()
+        .await
+        .with_context(|| format!("Failed to GET /wait/{}", id))?;
+
+    if !wait_response.status().is_success() {
+        let err_text = wait_response.text().await.unwrap_or_default();
+        anyhow::bail!("GET /wait/{} failed: {}", id, err_text);
+    }
+
+    let envelope: serde_json::Value = wait_response.json().await
+        .context("Failed to parse answer envelope")?;
+
+    let answer = envelope.get("answer")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+
+    let via = envelope.get("via")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    info!("Got answer via {}: {:?}", via, answer);
 
     Ok(answer)
 }
@@ -415,49 +478,39 @@ async fn send_chat_reply(config: &Config, profile: &str, space: &str, thread: &s
     Ok(())
 }
 
-/// Get list of available gog profiles
+/// Get list of available gog profiles by reading gog's config.json
 async fn get_profiles(config: &Config) -> Result<Vec<String>> {
-    let output = Command::new(&config.gog_binary)
-        .arg("--json")
-        .arg("--results-only")
-        .arg("auth")
-        .arg("status")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("Failed to run gog auth status")?;
+    // Read gog config.json to find all account_clients
+    let gog_config_path = dirs::config_dir()
+        .map(|d| d.join("gogcli").join("config.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.config/gogcli/config.json"));
 
-    if !output.status.success() {
-        return Ok(vec![]);
-    }
+    let config_content = tokio::fs::read_to_string(&gog_config_path).await
+        .with_context(|| format!("Failed to read gog config at {:?}", gog_config_path))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
-        Ok(v) => v,
-        Err(_) => return Ok(vec![]),
-    };
+    let parsed: serde_json::Value = serde_json::from_str(&config_content)
+        .with_context(|| "Failed to parse gog config.json")?;
 
-    let profiles = parsed.get("profiles")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|p| p.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
-                .collect()
+    let profiles = parsed.get("account_clients")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.values()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<String>>()
         })
         .unwrap_or_default();
 
     Ok(profiles)
 }
 
-async fn run_daemon() -> Result<()> {
+async fn run_daemon(profiles: Vec<String>) -> Result<()> {
     info!("SJBIS Gog Plugin starting...");
 
     let config = Config::default();
     let mut dedup = DedupCache::new(config.dedup_window_secs);
 
     // Determine profiles to monitor
-    let profiles = if config.profiles.is_empty() {
+    let profiles = if profiles.is_empty() {
         info!("No profiles configured, auto-detecting...");
         match get_profiles(&config).await {
             Ok(p) if !p.is_empty() => {
@@ -470,7 +523,7 @@ async fn run_daemon() -> Result<()> {
             }
         }
     } else {
-        config.profiles.clone()
+        profiles
     };
 
     if config.enable_gmail {
@@ -499,9 +552,11 @@ async fn run_daemon() -> Result<()> {
 
 async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCache) {
     let mut ticker = interval(Duration::from_secs(config.poll_interval_secs));
+    info!("Gmail poller for profile {} started, interval={}s", profile, config.poll_interval_secs);
 
     loop {
         ticker.tick().await;
+        info!("Gmail poll tick for profile {}", profile);
 
         match fetch_gmail_threads(&config, &profile).await {
             Ok(threads) => {
@@ -528,7 +583,7 @@ async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCach
 
                     let detail = format!("Email: {}\nSubject: {}\nProfile: {}", thread.from, thread.subject, profile);
 
-                    match surface_question(&config.sjbis_binary, &config.agent_name, &profile, &thread.from, &question_text, &detail).await {
+                    match surface_question(&config.daemon_url, &config.agent_name, &profile, &thread.from, &question_text, &detail).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
                             if let Err(e) = send_gmail_reply(&config, &profile, &thread.id, &answer).await {
@@ -558,9 +613,11 @@ async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCach
 
 async fn chat_poller_task(config: Config, profile: String, mut dedup: DedupCache) {
     let mut ticker = interval(Duration::from_secs(config.poll_interval_secs));
+    info!("Chat poller for profile {} started, interval={}s", profile, config.poll_interval_secs);
 
     loop {
         ticker.tick().await;
+        info!("Chat poll tick for profile {}", profile);
 
         match fetch_chat_messages(&config, &profile).await {
             Ok(messages) => {
@@ -581,7 +638,7 @@ async fn chat_poller_task(config: Config, profile: String, mut dedup: DedupCache
 
                     let detail = format!("Chat from {} in {}\nProfile: {}", msg.sender, msg.space, profile);
 
-                    match surface_question(&config.sjbis_binary, &config.agent_name, &profile, &msg.sender, &msg.text, &detail).await {
+                    match surface_question(&config.daemon_url, &config.agent_name, &profile, &msg.sender, &msg.text, &detail).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
                             // Extract space name from message id (spaces/xxx/messages/yyy)
@@ -708,10 +765,10 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let cmd = cli.command.unwrap_or(Commands::Run);
+    let cmd = cli.command.unwrap_or(Commands::Run { profile: vec![] });
 
     match cmd {
-        Commands::Run => run_daemon().await,
+        Commands::Run { profile } => run_daemon(profile).await,
         Commands::TestGmail { profile } => run_test_gmail(profile).await,
         Commands::TestChat { profile } => run_test_chat(profile).await,
     }
