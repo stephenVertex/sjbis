@@ -423,6 +423,31 @@ async fn send_gmail_reply(config: &Config, profile: &str, thread_id: &str, subje
     Ok(())
 }
 
+/// Mark a Gmail thread as read
+async fn mark_gmail_read(config: &Config, profile: &str, message_id: &str) -> Result<()> {
+    info!("Marking Gmail message {} as read", message_id);
+
+    let mut cmd = Command::new(&config.gog_binary);
+    if !profile.is_empty() {
+        cmd.arg("--client").arg(profile);
+    }
+    cmd.arg("gmail")
+        .arg("mark-read")
+        .arg(message_id)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = cmd.output().await.context("Failed to run gog gmail mark-read")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("gog gmail mark-read failed: {}", stderr);
+    }
+
+    info!("Marked Gmail message {} as read", message_id);
+    Ok(())
+}
+
 /// Send a Chat reply via gog
 async fn send_chat_reply(config: &Config, profile: &str, space: &str, thread: &str, reply: &str) -> Result<()> {
     info!("Sending Chat reply to space {} via gog", space);
@@ -585,10 +610,19 @@ async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCach
                             info!("Got answer: {}", answer);
                             if let Err(e) = send_gmail_reply(&config, &profile, &thread.id, &thread.subject, &answer).await {
                                 error!("Failed to send Gmail reply: {}", e);
+                            } else {
+                                // Mark as read after successful reply
+                                if let Err(e) = mark_gmail_read(&config, &profile, &thread.id).await {
+                                    warn!("Failed to mark Gmail as read: {}", e);
+                                }
                             }
                         }
                         Ok(None) => {
                             debug!("No answer or dismissed");
+                            // Mark as read even if dismissed without answering
+                            if let Err(e) = mark_gmail_read(&config, &profile, &thread.id).await {
+                                warn!("Failed to mark Gmail as read: {}", e);
+                            }
                         }
                         Err(e) => {
                             error!("Failed to surface Gmail question: {}", e);
