@@ -387,8 +387,14 @@ async fn surface_question(
 }
 
 /// Send a Gmail reply via gog
-async fn send_gmail_reply(config: &Config, profile: &str, thread_id: &str, reply: &str) -> Result<()> {
+async fn send_gmail_reply(config: &Config, profile: &str, thread_id: &str, subject: &str, reply: &str) -> Result<()> {
     info!("Sending Gmail reply to thread {} via gog", thread_id);
+
+    let reply_subject = if subject.starts_with("Re: ") {
+        subject.to_string()
+    } else {
+        format!("Re: {}", subject)
+    };
 
     let mut cmd = Command::new(&config.gog_binary);
     if !profile.is_empty() {
@@ -396,8 +402,11 @@ async fn send_gmail_reply(config: &Config, profile: &str, thread_id: &str, reply
     }
     cmd.arg("gmail")
         .arg("send")
-        .arg("--reply-to")
+        .arg("--thread-id")
         .arg(thread_id)
+        .arg("--reply-all")
+        .arg("--subject")
+        .arg(&reply_subject)
         .arg("--body")
         .arg(reply)
         .stdout(Stdio::piped())
@@ -574,7 +583,7 @@ async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCach
                     match surface_question(&config.daemon_url, &config.agent_name, &profile, &thread.from, &question_text, &detail).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
-                            if let Err(e) = send_gmail_reply(&config, &profile, &thread.id, &answer).await {
+                            if let Err(e) = send_gmail_reply(&config, &profile, &thread.id, &thread.subject, &answer).await {
                                 error!("Failed to send Gmail reply: {}", e);
                             }
                         }
