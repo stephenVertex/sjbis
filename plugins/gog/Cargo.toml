@@ -16,7 +16,6 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-toml = "0.8"
 
 # For spawning gog subprocess and parsing output
 # No special deps needed — we shell out to gog CLI

@@ -44,7 +44,7 @@ enum Commands {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
-    daemon_url: String,
+    sjbis_binary: String,
     gog_binary: String,
     /// Poll interval in seconds
     poll_interval_secs: u64,
@@ -66,12 +66,8 @@ fn default_true() -> bool { true }
 
 impl Default for Config {
     fn default() -> Self {
-        // Load daemon URL from config file if available
-        let daemon_url = load_daemon_url_from_config()
-            .unwrap_or_else(|| "http://localhost:7878".to_string());
-
         Self {
-            daemon_url,
+            sjbis_binary: "sjbis".to_string(),
             gog_binary: "gog".to_string(),
             poll_interval_secs: 60,
             dedup_window_secs: 300,
@@ -84,27 +80,6 @@ impl Default for Config {
 }
 
 /// Load daemon URL from ~/.config/sjbis/daemon.toml
-fn load_daemon_url_from_config() -> Option<String> {
-    let candidates = [
-        std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
-            .join(".config/sjbis/daemon.toml"),
-        dirs::config_dir()
-            .unwrap_or_else(|| std::env::temp_dir())
-            .join("sjbis/daemon.toml"),
-    ];
-
-    for path in &candidates {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(config) = toml::from_str::<toml::Value>(&content) {
-                if let Some(url) = config.get("url").and_then(|v| v.as_str()) {
-                    return Some(url.to_string());
-                }
-            }
-        }
-    }
-    None
-}
-
 /// A dedup cache that prevents surfacing the same message twice within a window.
 #[derive(Clone)]
 struct DedupCache {
@@ -317,71 +292,46 @@ async fn fetch_chat_messages(config: &Config, profile: &str) -> Result<Vec<ChatM
     Ok(messages)
 }
 
-/// Surface a question via HTTP POST to the SJBIS daemon
+/// Surface a question via `sjbis ask` CLI
 async fn surface_question(
-    daemon_url: &str,
+    sjbis_binary: &str,
     agent_name: &str,
     profile: &str,
     source: &str,
     question: &str,
     detail: &str,
 ) -> Result<Option<String>> {
-    let client = reqwest::Client::new();
-    
-    let body = serde_json::json!({
-        "question": question,
-        "agent_name": agent_name,
-        "instance": format!("{} · {}", profile, source),
-        "detail": detail,
-        "blocking": true,
-        "question_type": "yesno",
-    });
+    let mut cmd = Command::new(sjbis_binary);
+    cmd.arg("ask")
+        .arg("--question")
+        .arg(question)
+        .arg("--yesno")
+        .arg("--blocking")
+        .arg("--json")
+        .arg("--agent-name")
+        .arg(agent_name)
+        .arg("--instance")
+        .arg(format!("{} · {}", profile, source))
+        .arg("--detail")
+        .arg(detail)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    let response = client
-        .post(format!("{}/ask", daemon_url))
-        .json(&body)
-        .send()
-        .await
-        .with_context(|| format!("Failed to POST to {}/ask", daemon_url))?;
+    let output = cmd.output().await.context("Failed to run sjbis ask")?;
 
-    if !response.status().is_success() {
-        let err_text = response.text().await.unwrap_or_default();
-        anyhow::bail!("POST /ask failed: {}", err_text);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!("sjbis ask failed: {}", stderr);
+        return Err(anyhow::anyhow!("sjbis ask failed: {}", stderr));
     }
 
-    let notification: serde_json::Value = response.json().await
-        .context("Failed to parse notification response")?;
-    
-    let id = notification.get("id")
-        .and_then(|v| v.as_str())
-        .context("No id in notification response")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let response: serde_json::Value = serde_json::from_str(&stdout)
+        .context("Failed to parse sjbis response")?;
 
-    info!("Surfaced notification {}, waiting for answer...", id);
-
-    // Block on GET /wait/{id}
-    let wait_response = client
-        .get(format!("{}/wait/{}", daemon_url, id))
-        .send()
-        .await
-        .with_context(|| format!("Failed to GET /wait/{}", id))?;
-
-    if !wait_response.status().is_success() {
-        let err_text = wait_response.text().await.unwrap_or_default();
-        anyhow::bail!("GET /wait/{} failed: {}", id, err_text);
-    }
-
-    let envelope: serde_json::Value = wait_response.json().await
-        .context("Failed to parse answer envelope")?;
-
-    let answer = envelope.get("answer")
+    let answer = response.get("answer")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-
-    let via = envelope.get("via")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-
-    info!("Got answer via {}: {:?}", via, answer);
 
     Ok(answer)
 }
@@ -605,7 +555,7 @@ async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCach
 
                     let detail = format!("Email: {}\nSubject: {}\nProfile: {}", thread.from, thread.subject, profile);
 
-                    match surface_question(&config.daemon_url, &config.agent_name, &profile, &thread.from, &question_text, &detail).await {
+                    match surface_question(&config.sjbis_binary, &config.agent_name, &profile, &thread.from, &question_text, &detail).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
                             if let Err(e) = send_gmail_reply(&config, &profile, &thread.id, &thread.subject, &answer).await {
@@ -686,7 +636,7 @@ async fn chat_poller_task(config: Config, profile: String, mut dedup: DedupCache
 
                     let detail = format!("Chat from {} in {}\nProfile: {}", msg.sender, msg.space, profile);
 
-                    match surface_question(&config.daemon_url, &config.agent_name, &profile, &msg.sender, &msg.text, &detail).await {
+                    match surface_question(&config.sjbis_binary, &config.agent_name, &profile, &msg.sender, &msg.text, &detail).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
                             // Extract space name from message id (spaces/xxx/messages/yyy)
