@@ -2,12 +2,14 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
+
+mod ai_classifier;
 
 #[derive(Parser)]
 #[command(name = "sjbis-signal")]
@@ -99,10 +101,35 @@ struct SentMessage {
 
 #[derive(Debug, Clone)]
 struct Message {
-    sender: String,     // phone number or name
+    sender_name: String,     // display name
+    sender_number: String,   // phone number for replies
     text: String,
     timestamp: DateTime<Utc>,
     is_from_me: bool,
+}
+
+/// A dedup cache that prevents surfacing the same message twice within a window.
+#[derive(Clone)]
+struct DedupCache {
+    seen: std::collections::HashSet<String>,
+    window_secs: u64,
+}
+
+impl DedupCache {
+    fn new(window_secs: u64) -> Self {
+        Self {
+            seen: std::collections::HashSet::new(),
+            window_secs,
+        }
+    }
+
+    fn is_duplicate(&self, id: &str) -> bool {
+        self.seen.contains(id)
+    }
+
+    fn insert(&mut self, id: &str) {
+        self.seen.insert(id.to_string());
+    }
 }
 
 /// Fetch messages from signal-cli via JSON-RPC or receive command
@@ -163,20 +190,28 @@ async fn fetch_messages(config: &Config, since: DateTime<Utc>) -> Result<Vec<Mes
             continue;
         }
 
-        let sender = envelope
+        let sender_name = envelope
             .source_name
             .clone()
-            .or(envelope.source_number.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let ts = Utc.timestamp_millis_opt(envelope.timestamp).unwrap_or(Utc::now());
+        let sender_number = envelope
+            .source_number
+            .clone()
+            .unwrap_or_else(|| sender_name.clone());
+
+        let ts = match Utc.timestamp_millis_opt(envelope.timestamp) {
+            chrono::MappedLocalTime::Single(dt) => dt,
+            _ => Utc::now(),
+        };
 
         if ts < since {
             continue;
         }
 
         messages.push(Message {
-            sender,
+            sender_name,
+            sender_number,
             text,
             timestamp: ts,
             is_from_me: false,
@@ -191,13 +226,28 @@ async fn surface_question(
     agent_name: &str,
     message: &Message,
 ) -> Result<Option<String>> {
-    // Use the same question filter heuristic as iMessage
-    if !looks_like_question(&message.text) {
-        debug!("Message does not look like a question, skipping: {}", message.text);
+    // Use AI to classify whether this message is a question
+    let (is_question, explanation) = match ai_classifier::is_question_for_user(
+        &message.text,
+        &message.sender_name,
+    ).await {
+        Ok((is_q, exp)) => {
+            debug!("AI classified Signal from {}: is_question={} ({})", message.sender_name, is_q, exp);
+            (is_q, exp)
+        }
+        Err(e) => {
+            warn!("AI classifier failed for Signal from {}: {}, falling back to regex", message.sender_name, e);
+            let is_q = looks_like_question(&message.text);
+            (is_q, "regex fallback".to_string())
+        }
+    };
+
+    if !is_question {
+        debug!("Signal message not a question ({}): {} | {}", explanation, message.sender_name, message.text);
         return Ok(None);
     }
 
-    info!("Surfacing Signal message from {}: {}", message.sender, message.text);
+    info!("Surfacing Signal message from {}: {}", message.sender_name, message.text);
 
     let mut cmd = Command::new(sjbis_binary);
     cmd.arg("ask")
@@ -209,9 +259,9 @@ async fn surface_question(
         .arg("--agent-name")
         .arg(agent_name)
         .arg("--instance")
-        .arg(&message.sender)
+        .arg(&message.sender_name)
         .arg("--detail")
-        .arg(format!("Signal from {} at {}", message.sender, message.timestamp))
+        .arg(format!("Signal from {} at {}", message.sender_name, message.timestamp))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -300,6 +350,7 @@ async fn run_daemon() -> Result<()> {
     info!("Run 'signal-cli -a YOURNUMBER register' or 'signal-cli link' first.");
 
     let config = Config::default();
+    let mut dedup = DedupCache::new(300);
     let mut ticker = interval(Duration::from_secs(config.poll_interval_secs));
     let mut last_check = Utc::now();
 
@@ -324,14 +375,20 @@ async fn run_daemon() -> Result<()> {
             Ok(messages) => {
                 last_check = Utc::now();
                 for msg in messages {
+                    let dedup_key = format!("signal:{}:{}", msg.sender_number, msg.timestamp);
+                    if dedup.is_duplicate(&dedup_key) {
+                        debug!("Duplicate Signal message, skipping: {}", msg.sender_name);
+                        continue;
+                    }
+                    dedup.insert(&dedup_key);
+
                     match surface_question(&config.sjbis_binary, &config.agent_name, &msg).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
-                            // Send reply back to the sender
-                            // We need the phone number, not just the name
-                            // For now, log that we would send it
-                            info!("Would send reply to {}: {}", msg.sender, answer);
-                            // send_reply(&config, &msg.sender, &answer).await?;
+                            // Send reply back to the sender using phone number
+                            if let Err(e) = send_reply(&config, &msg.sender_number, &answer).await {
+                                error!("Failed to send Signal reply: {}", e);
+                            }
                         }
                         Ok(None) => {
                             debug!("No answer or not a question");
@@ -365,12 +422,22 @@ async fn run_test(minutes: i64) -> Result<()> {
 
             let mut questions_found = 0;
             for msg in &messages {
-                let is_question = looks_like_question(&msg.text);
+                let (is_question, explanation) = match ai_classifier::is_question_for_user(
+                    &msg.text,
+                    &msg.sender_name,
+                ).await {
+                    Ok((is_q, exp)) => (is_q, exp),
+                    Err(e) => {
+                        println!("AI error for {}: {}, using regex fallback", msg.sender_name, e);
+                        let is_q = looks_like_question(&msg.text);
+                        (is_q, "regex fallback".to_string())
+                    }
+                };
                 if is_question {
                     questions_found += 1;
-                    println!("[QUESTION] {} | {} | {}", msg.timestamp, msg.sender, msg.text);
+                    println!("[QUESTION] {} | {} | {} | {}", msg.timestamp, msg.sender_name, explanation, msg.text);
                 } else {
-                    println!("[skip]     {} | {} | {}", msg.timestamp, msg.sender, msg.text);
+                    println!("[skip]     {} | {} | {} | {}", msg.timestamp, msg.sender_name, explanation, msg.text);
                 }
             }
 
