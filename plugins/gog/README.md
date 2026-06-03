@@ -1,6 +1,16 @@
 # SJBIS Gog Plugin
 
-Surfaces Gmail and Google Chat messages as SJBIS notifications.
+Surfaces Gmail and Google Chat messages as SJBIS notifications. Uses AI to classify whether a message is a real question requiring a human response, then routes your answer back to the original sender.
+
+## How it works
+
+1. **Polls Gmail** every 60 seconds for unread threads
+2. **Fetches email body** via `gog gmail get` (not just subject/snippet)
+3. **AI classification** asks: "Is this a direct question requiring a human response?"
+4. **Surfaces** to the SJBIS dashboard via HTTP POST to the daemon
+5. **Waits** for you to answer on the dashboard
+6. **Sends reply** back via `gog gmail send` with the correct thread
+7. **Marks as read** to prevent resurfacing
 
 ## Prerequisites
 
@@ -16,70 +26,131 @@ Surfaces Gmail and Google Chat messages as SJBIS notifications.
    gog --client=work auth login
    ```
 
-3. **SJBIS daemon running** (the plugin shells out to `sjbis ask`):
+3. **Set up daemon URL**:
+   ```bash
+   mkdir -p ~/.config/sjbis
+   echo 'url = "http://dertog:7878"' > ~/.config/sjbis/daemon.toml
+   ```
+
+4. **Set Fireworks API key** (for AI classification):
+   ```bash
+   export FIREWORKS_API_KEY="fw_..."
+   ```
+
+5. **SJBIS daemon running** on the target machine:
    ```bash
    sjbis daemon start
    ```
+
+## Installation
+
+### Build the plugin
+
+```bash
+cd plugins/gog
+cargo build --release
+```
+
+### Cross-compile for Linux (if daemon runs on a server)
+
+```bash
+cargo zigbuild --target x86_64-unknown-linux-musl --release
+```
+
+### Run as a macOS background service
+
+```bash
+# Create the launchd plist
+cat > ~/Library/LaunchAgents/com.sjbis.gog.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sjbis.gog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/USER/dev5/sjbis/plugins/gog/target/release/sjbis-gog</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/USER/.config/sjbis/gog.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/USER/.config/sjbis/gog.error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>FIREWORKS_API_KEY</key>
+        <string>YOUR_FIREWORKS_KEY</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+# Load the service
+launchctl load ~/Library/LaunchAgents/com.sjbis.gog.plist
+
+# Check status
+launchctl list com.sjbis.gog
+```
 
 ## Usage
 
 ### Run the daemon
 
 ```bash
+# Auto-detects all authenticated profiles
 cd plugins/gog
-cargo run -- run
+cargo run --release -- run
+
+# Or with specific profiles
+cargo run --release -- run --profile sjbdf --profile work
 ```
-
-This polls all authenticated gog profiles for:
-- **Unread Gmail threads** that look like questions/requests
-- **Google Chat messages** that look like questions/requests
-
-When it finds one, it runs `sjbis ask --blocking` and waits for you to answer on the dashboard. When you answer, it sends the reply back via Gmail or Chat.
 
 ### Test mode (dry run)
 
 ```bash
-# Test Gmail
- cargo run -- test-gmail --profile default
+# Test Gmail - shows what would be surfaced without sending
+ cargo run --release -- test-gmail --profile sjbdf
 
-# Test Chat
- cargo run -- test-chat --profile default
+# Test Chat - shows what would be surfaced
+ cargo run --release -- test-chat --profile sjbdf
 ```
 
-### Test a specific profile
+## AI Classification
 
-```bash
-cargo run -- run
-# Auto-detects all authenticated profiles
-```
+The plugin uses Fireworks AI (kimi-k2p6) to determine if an email is a real question:
 
-## How it works
+- **Real questions** → Surfaced to dashboard (e.g., "Are you free?", "What do you think?", "quick question")
+- **Newsletters** → Skipped (e.g., The Information Briefing, Substack digests)
+- **Marketing** → Skipped (e.g., "EXTRA 25% off", promotional emails)
+- **Self-reminders** → Skipped (e.g., "very important message" from yourself)
+- **Sales/Spam** → Skipped
 
-1. **Polls Gmail** every 60 seconds:
-   ```bash
-   gog gmail search "is:unread newer_than:1d" -j
-   ```
-   Filters threads by the same question heuristic as iMessage.
+If the AI is unavailable, it falls back to regex heuristics.
 
-2. **Polls Chat** every 60 seconds:
-   ```bash
-   gog chat spaces list -j
-   gog chat messages list <space> -j
-   ```
-   Checks messages in all spaces for question-like content.
+## Answer Routing
 
-3. **Surfaces** via HTTP POST to the SJBIS daemon:
-   ```bash
-   POST http://dertog:7878/ask
-   {"question": "...", "agent_name": "Gog", "instance": "profile · sender", "blocking": true}
-   ```
-   Then blocks on `GET /wait/{id}` until you answer on the dashboard.
+The plugin handles different reply destinations based on the source:
 
-4. **Sends reply** when you answer:
-   ```bash
-   gog gmail send --reply-to <thread_id> --body "..."
-   gog chat messages create <space> --text "..."
-   ```
+| Source | Reply Method | Format |
+|--------|-------------|--------|
+| **Gmail** | `gog gmail send --thread-id --reply-all` | Re: Subject |
+| **Chat** | `gog chat messages create` | Direct reply |
+| **CLI** | `sjbis ask` stdout | JSON with answer |
+| **HTTP** | `GET /wait/{id}` | Answer envelope |
+
+After replying, the Gmail thread is **marked as read** to prevent resurfacing.
 
 ## Multiple profiles
 
@@ -90,32 +161,54 @@ gog --client=personal auth login
 gog --client=work auth login
 ```
 
-The plugin auto-detects all profiles and polls each one independently.
+The plugin reads `~/.config/gogcli/config.json` to auto-detect all profiles.
 
 ## Configuration
 
-### Daemon URL
-
-The plugin reads the daemon URL from `~/.config/sjbis/daemon.toml`:
+The plugin reads `~/.config/sjbis/daemon.toml` for the daemon URL:
 
 ```toml
 url = "http://dertog:7878"
 ```
-
-Create this file so the plugin knows where to POST notifications:
-
-```bash
-mkdir -p ~/.config/sjbis
-echo 'url = "http://dertog:7878"' > ~/.config/sjbis/daemon.toml
-```
-
-### Other options
 
 Edit `Config::default()` in `src/main.rs` to customize:
 - `poll_interval_secs`: How often to poll (default: 60s)
 - `dedup_window_secs`: Dedup window (default: 300s)
 - `agent_name`: Name shown in SJBIS dashboard (default: "Gog")
 - `profiles`: Specific profiles to monitor (empty = auto-detect all)
+
+## Architecture
+
+```
+Gmail API (gog CLI)
+    ↓
+Fetch unread threads
+    ↓
+Fetch email body (gog gmail get)
+    ↓
+AI classifier (Fireworks API)
+    → Real question? → POST to SJBIS daemon /ask
+    → Newsletter? → Skip
+    → Spam? → Skip
+    ↓
+Dashboard (SJBIS web UI)
+    → You answer
+    ↓
+Reply routed back
+    → Gmail: gog gmail send --reply-all
+    → Chat: gog chat messages create
+    → Mark as read
+```
+
+## Logs
+
+```bash
+# Service logs
+tail -f ~/.config/sjbis/gog.log
+
+# Error logs
+tail -f ~/.config/sjbis/gog.error.log
+```
 
 ## Troubleshooting
 
@@ -133,11 +226,27 @@ Check that gog is authenticated:
 gog auth status
 ```
 
+### AI classifier fails (401 Unauthorized)
+
+Check your Fireworks API key is set:
+```bash
+echo $FIREWORKS_API_KEY
+```
+
 ### Gmail replies not sending
 
 Check that `gmail-no-send` is not enabled:
 ```bash
 gog --gmail-no-send=false gmail send --help
+```
+
+### Post to daemon fails
+
+Verify the daemon URL is reachable:
+```bash
+curl http://dertog:7878/health
+# or
+curl http://192.168.0.138:7878/health
 ```
 
 ## License
