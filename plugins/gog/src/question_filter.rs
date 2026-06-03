@@ -74,7 +74,17 @@ pub fn looks_like_question(text: &str) -> bool {
     }
 
     // Contains a question mark AND has actual words
+    // For long texts (newsletters, articles), require the question to be near the start
     if trimmed.contains('?') && alphanumeric_count >= 3 {
+        // If text is long (>500 chars), check if question is in first 200 chars
+        if trimmed.len() > 500 {
+            let first_200 = &trimmed[..200.min(trimmed.len())];
+            if first_200.contains('?') {
+                return true;
+            }
+            // Long text with no early question = probably a newsletter/article
+            return false;
+        }
         return true;
     }
 
@@ -93,6 +103,13 @@ pub fn looks_like_question(text: &str) -> bool {
     }
 
     // Contains explicit request patterns
+    // For long texts (newsletters, articles), only check the first 500 chars
+    let search_text = if trimmed.len() > 1000 {
+        &lower[..500.min(lower.len())]
+    } else {
+        &lower[..]
+    };
+    
     let request_patterns = [
         "let me know",
         "what do you think",
@@ -118,15 +135,24 @@ pub fn looks_like_question(text: &str) -> bool {
         "up for",
         "down for",
         "interested in",
+        "quick question",
+        "quick question for you",
+        "need your input",
+        "need your opinion",
+        "need your thoughts",
+        "question for you",
+        "have a question",
+        "need to order",
+        "about to order",
     ];
     for pattern in &request_patterns {
-        if lower.contains(pattern) {
+        if search_text.contains(pattern) {
             return true;
         }
     }
 
     // Binary choice patterns
-    if lower.contains(" or ") && trimmed.len() > 15 {
+    if search_text.contains(" or ") && trimmed.len() > 10 {
         return true;
     }
 
@@ -163,6 +189,10 @@ mod tests {
         assert!(looks_like_question("Yes or no?"));
         assert!(looks_like_question("How about Thai or Indian?"));
         assert!(looks_like_question("What do you think about the proposal?"));
+        assert!(looks_like_question("quick question"));
+        assert!(looks_like_question("quick question for you"));
+        assert!(looks_like_question("Need to order lunch?"));
+        assert!(looks_like_question("cheese or pepperoni"));
     }
 
     #[test]

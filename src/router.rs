@@ -2,7 +2,7 @@ use crate::models::*;
 use anyhow::{Context, Result};
 use serde_json::json;
 
-const DEFAULT_MODEL: &str = "fireworks-ai/accounts/fireworks/models/kimi-k2p6";
+const DEFAULT_MODEL: &str = "accounts/fireworks/models/kimi-k2p6";
 
 pub struct AiRouter {
     client: reqwest::Client,

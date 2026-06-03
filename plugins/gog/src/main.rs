@@ -9,6 +9,7 @@ use tokio::process::Command;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 
+mod ai_classifier;
 mod question_filter;
 
 #[derive(Parser)]
@@ -132,7 +133,7 @@ impl DedupCache {
 #[derive(Debug, Clone)]
 struct GmailThread {
     id: String,
-    snippet: String,
+    body: String,
     subject: String,
     from: String,
     date: DateTime<Utc>,
@@ -205,11 +206,6 @@ async fn fetch_gmail_threads(config: &Config, profile: &str) -> Result<Vec<Gmail
             .to_string();
         if id.is_empty() { continue; }
 
-        let snippet = item.get("snippet")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
         let subject = item.get("subject")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -220,9 +216,18 @@ async fn fetch_gmail_threads(config: &Config, profile: &str) -> Result<Vec<Gmail
             .unwrap_or("")
             .to_string();
 
+        // Fetch the actual message body for question detection
+        let body = match fetch_gmail_message_body(config, profile, &id).await {
+            Ok(b) => b,
+            Err(e) => {
+                debug!("Failed to fetch body for {}: {}", id, e);
+                String::new()
+            }
+        };
+
         threads.push(GmailThread {
             id,
-            snippet,
+            body,
             subject,
             from,
             date: Utc::now(), // gog doesn't expose precise date easily
@@ -233,55 +238,19 @@ async fn fetch_gmail_threads(config: &Config, profile: &str) -> Result<Vec<Gmail
     Ok(threads)
 }
 
-/// Fetch subject and sender from a thread
-async fn fetch_gmail_thread_detail(config: &Config, profile: &str, thread_id: &str) -> Result<(String, String)> {
+/// Fetch the body of a Gmail message
+async fn fetch_gmail_message_body(config: &Config, profile: &str, message_id: &str) -> Result<String> {
     let result = gog_json(config, profile, &[
-        "gmail", "search",
-        &format!("thread:{}", thread_id),
-        "--max", "1",
+        "gmail", "get", message_id,
     ]).await?;
 
-    let subject = result.get("threads")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|t| t.get("messages"))
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|m| m.get("payload"))
-        .and_then(|p| p.get("headers"))
-        .and_then(|h| h.as_array())
-        .and_then(|headers| {
-            headers.iter().find_map(|h| {
-                if h.get("name")?.as_str()? == "Subject" {
-                    h.get("value")?.as_str().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| "(no subject)".to_string());
+    // gog returns a "body" field at the top level
+    let body = result.get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
-    let from = result.get("threads")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|t| t.get("messages"))
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|m| m.get("payload"))
-        .and_then(|p| p.get("headers"))
-        .and_then(|h| h.as_array())
-        .and_then(|headers| {
-            headers.iter().find_map(|h| {
-                if h.get("name")?.as_str()? == "From" {
-                    h.get("value")?.as_str().map(|s| s.to_string())
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| "unknown".to_string());
-
-    Ok((subject, from))
+    Ok(body)
 }
 
 /// Fetch recent Chat messages from all spaces
@@ -568,16 +537,35 @@ async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCach
                     }
                     dedup.insert(&dedup_key);
 
-                    let question_text = if !thread.snippet.is_empty() {
-                        thread.snippet.clone()
+                    // Use AI to classify whether this email is a question
+                    let (is_question, explanation) = match ai_classifier::is_question_for_user(
+                        &thread.body,
+                        &thread.from,
+                        &thread.subject,
+                    ).await {
+                        Ok((is_q, exp)) => {
+                            debug!("AI classified email from {}: is_question={} ({})", thread.from, is_q, exp);
+                            (is_q, exp)
+                        }
+                        Err(e) => {
+                            warn!("AI classifier failed for email from {}: {}, falling back to regex", thread.from, e);
+                            // Fallback to regex
+                            let is_q = !thread.body.is_empty() && question_filter::looks_like_question(&thread.body)
+                                || question_filter::looks_like_question(&thread.subject);
+                            (is_q, "regex fallback".to_string())
+                        }
+                    };
+
+                    if !is_question {
+                        debug!("Gmail thread not a question ({}): {} | {}", explanation, thread.from, thread.subject);
+                        continue;
+                    }
+
+                    let question_text = if !thread.body.is_empty() {
+                        thread.body.clone()
                     } else {
                         thread.subject.clone()
                     };
-
-                    if !question_filter::looks_like_question(&question_text) {
-                        debug!("Gmail thread does not look like a question: {}", question_text);
-                        continue;
-                    }
 
                     info!("Surfacing Gmail question from {}: {}", thread.from, question_text);
 
@@ -629,8 +617,25 @@ async fn chat_poller_task(config: Config, profile: String, mut dedup: DedupCache
                     }
                     dedup.insert(&dedup_key);
 
-                    if !question_filter::looks_like_question(&msg.text) {
-                        debug!("Chat message does not look like a question: {}", msg.text);
+                    // Use AI to classify whether this message is a question
+                    let (is_question, explanation) = match ai_classifier::is_question_for_user(
+                        &msg.text,
+                        &msg.sender,
+                        &format!("Chat in {}", msg.space),
+                    ).await {
+                        Ok((is_q, exp)) => {
+                            debug!("AI classified chat from {}: is_question={} ({})", msg.sender, is_q, exp);
+                            (is_q, exp)
+                        }
+                        Err(e) => {
+                            warn!("AI classifier failed for chat from {}: {}, falling back to regex", msg.sender, e);
+                            let is_q = question_filter::looks_like_question(&msg.text);
+                            (is_q, "regex fallback".to_string())
+                        }
+                    };
+
+                    if !is_question {
+                        debug!("Chat message not a question ({}): {} | {}", explanation, msg.sender, msg.text);
                         continue;
                     }
 
@@ -697,12 +702,24 @@ async fn run_test_gmail(profile: Option<String>) -> Result<()> {
             println!("\nFound {} unread Gmail threads\n", threads.len());
             let mut questions_found = 0;
             for thread in &threads {
-                let is_question = question_filter::looks_like_question(&thread.snippet);
+                let (is_question, explanation) = match ai_classifier::is_question_for_user(
+                    &thread.body,
+                    &thread.from,
+                    &thread.subject,
+                ).await {
+                    Ok((is_q, exp)) => (is_q, exp),
+                    Err(e) => {
+                        println!("AI error for {}: {}, using regex fallback", thread.from, e);
+                        let is_q = !thread.body.is_empty() && question_filter::looks_like_question(&thread.body)
+                            || question_filter::looks_like_question(&thread.subject);
+                        (is_q, "regex fallback".to_string())
+                    }
+                };
                 if is_question {
                     questions_found += 1;
-                    println!("[QUESTION] {} | {} | {}", thread.from, thread.subject, thread.snippet);
+                    println!("[QUESTION] {} | {} | {} | {}", thread.from, thread.subject, explanation, thread.body);
                 } else {
-                    println!("[skip]     {} | {} | {}", thread.from, thread.subject, thread.snippet);
+                    println!("[skip]     {} | {} | {} | {}", thread.from, thread.subject, explanation, thread.body);
                 }
             }
             println!("\n{} of {} threads look like questions", questions_found, threads.len());
@@ -738,12 +755,23 @@ async fn run_test_chat(profile: Option<String>) -> Result<()> {
             println!("\nFound {} Chat messages\n", messages.len());
             let mut questions_found = 0;
             for msg in &messages {
-                let is_question = question_filter::looks_like_question(&msg.text);
+                let (is_question, explanation) = match ai_classifier::is_question_for_user(
+                    &msg.text,
+                    &msg.sender,
+                    &format!("Chat in {}", msg.space),
+                ).await {
+                    Ok((is_q, exp)) => (is_q, exp),
+                    Err(e) => {
+                        println!("AI error for {}: {}, using regex fallback", msg.sender, e);
+                        let is_q = question_filter::looks_like_question(&msg.text);
+                        (is_q, "regex fallback".to_string())
+                    }
+                };
                 if is_question {
                     questions_found += 1;
-                    println!("[QUESTION] {} | {} | {}", msg.space, msg.sender, msg.text);
+                    println!("[QUESTION] {} | {} | {} | {}", msg.space, msg.sender, explanation, msg.text);
                 } else {
-                    println!("[skip]     {} | {} | {}", msg.space, msg.sender, msg.text);
+                    println!("[skip]     {} | {} | {} | {}", msg.space, msg.sender, explanation, msg.text);
                 }
             }
             println!("\n{} of {} messages look like questions", questions_found, messages.len());
