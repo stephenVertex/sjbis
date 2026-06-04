@@ -34,6 +34,20 @@ const TYPE_ICONS = {
 // Global API helpers
 const API_BASE = window.location.origin;
 
+// Deduplicate a list of items by `id`, keeping the FIRST occurrence.
+// History is built newest-first, so the first occurrence is the freshest.
+function dedupeById(items) {
+  const seen = new Set();
+  const out = [];
+  for (const it of items) {
+    if (!it || it.id == null) continue;
+    if (seen.has(it.id)) continue;
+    seen.add(it.id);
+    out.push(it);
+  }
+  return out;
+}
+
 async function apiState() {
   const r = await fetch(`${API_BASE}/state`);
   if (!r.ok) throw new Error('failed to load state');
@@ -91,16 +105,66 @@ async function apiDeleteRule(id) {
   await fetch(`${API_BASE}/rules/${id}`, { method: 'DELETE' });
 }
 
+// Live-ticking deadline countdown shown on a card footer.
+// Updates every second; shows MM:SS, or Ns when under a minute, and EXPIRED at zero.
+function CardCountdown({ deadline }) {
+  const target = React.useMemo(() => new Date(deadline).getTime(), [deadline]);
+  const [now, setNow] = React.useState(Date.now());
+  React.useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const remain = Math.max(0, target - now);
+  const totalSec = Math.ceil(remain / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  const expired = remain <= 0;
+  const urgent = remain > 0 && remain < 60000;
+  const label = expired
+    ? 'EXPIRED'
+    : m > 0
+      ? `${m}:${String(s).padStart(2, '0')}`
+      : `${s}s`;
+  return (
+    <div className={'deadline cd' + (expired ? ' expired' : urgent ? ' urgent' : '')}>
+      ⏱ {label}
+    </div>
+  );
+}
+
 function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef }) {
   const agent = agents[n.agent_name] || agents[n.agent] || { glyph: '◐', name: n.agent_name || n.agent };
   const color = window.agentColor(n.agent_name || n.agent);
+  const resolved = n._resolved;
+  const fadeDelayMs = Math.max(0, (n._lingerMs || 3500) - 600);
+  // When resolving, the card runs the `cardResolveOut` animation and its
+  // delay must be the linger time. Inline styles override stylesheet rules,
+  // so we set animationDelay accordingly (entrance jitter otherwise).
+  const cardStyle = resolved
+    ? { '--agent': color, animationDelay: `${fadeDelayMs}ms`, '--fade-delay': `${fadeDelayMs}ms` }
+    : { '--agent': color, animationDelay: `${0.04 * Math.random()}s`, '--fade-delay': `${fadeDelayMs}ms` };
   return (
     <div
       ref={cardRef}
-      className={`card u${n.urgency}${selected ? ' is-selected' : ''}`}
-      style={{ '--agent': color, animationDelay: `${0.04 * Math.random()}s` }}
-      onClick={onClick}
+      className={`card u${n.urgency}${selected ? ' is-selected' : ''}${resolved ? ' is-resolving' : ''}`}
+      style={cardStyle}
+      onClick={resolved ? undefined : onClick}
     >
+      {resolved && (() => {
+        const auto = resolved.via === 'caller-timeout' || resolved.via === 'rule_auto_answer';
+        return (
+          <div className={'card-resolved' + (auto ? ' is-auto' : '')}>
+            <div className="card-resolved-mark">{auto ? '🤖' : '✓'}</div>
+            <div className="card-resolved-body">
+              <div className="card-resolved-kicker">
+                {auto ? 'Agent auto-picked (timed out)' : 'Answered'}
+              </div>
+              <div className="card-resolved-answer">{resolved.answer || 'no answer'}</div>
+              {resolved.note && <div className="card-resolved-note">{resolved.note}</div>}
+            </div>
+          </div>
+        );
+      })()}
       <div className="ribbon" />
       <span className="kbd-marker">↵ open</span>
       <button
@@ -140,9 +204,9 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef }) 
           <span className="ic">{TYPE_ICONS[n.question_type] || TYPE_ICONS[n.type] || '·'}</span>
           {window.TYPE_LABEL[n.question_type || n.type] || n.question_type || n.type}
         </div>
-        <div className="deadline">
-          {n.deadline ? `⏱ ${Math.floor((new Date(n.deadline) - Date.now()) / 60000)}m` : window.fmtSentAt(n.sentAt || n.created_at)}
-        </div>
+        {n.deadline
+          ? <CardCountdown deadline={n.deadline} />
+          : <div className="deadline">{window.fmtSentAt(n.sentAt || n.created_at)}</div>}
       </div>
     </div>
   );
@@ -299,6 +363,10 @@ function App() {
   const [selectedIdx, setSelectedIdx] = React.useState(0);
   const [connected, setConnected] = React.useState(false);
   const cardRefs = React.useRef({});
+  // Tracks notification ids currently showing their resolution overlay, so
+  // duplicate notification_answered events (reconnects, replays) don't reset
+  // the linger timer or re-inject the card — which caused UI flicker.
+  const resolvingRef = React.useRef(new Set());
 
   // Parse ?q_id=... from URL for deep-linking to a notification
   const urlQId = React.useMemo(() => {
@@ -311,7 +379,7 @@ function App() {
     apiState()
       .then((state) => {
         setNotifications(state.notifications || []);
-        setHistory(state.history || []);
+        setHistory(dedupeById(state.history || []));
         setRules(state.rules || []);
         setAgents(state.agents || {});
         window.AGENTS = state.agents || {};
@@ -347,7 +415,13 @@ function App() {
         if (!event.event) return;
         switch (event.event) {
           case 'notification_created':
-            setNotifications((prev) => [event.notification, ...prev]);
+            setNotifications((prev) => {
+              // Skip if this card is already present or already resolving
+              // (guards against duplicate/replayed events causing flicker).
+              if (resolvingRef.current.has(event.notification.id)) return prev;
+              if (prev.some((n) => n.id === event.notification.id)) return prev;
+              return [event.notification, ...prev];
+            });
             break;
           case 'notification_updated': {
             const now = Date.now();
@@ -362,15 +436,58 @@ function App() {
             }
             break;
           }
-          case 'notification_answered':
-            setNotifications((prev) => prev.filter((n) => n.id !== event.envelope.id));
-            // Add to history
+          case 'notification_answered': {
             const answered = event.envelope;
-            setHistory((prev) => [
-              { id: answered.id, agent_name: answered.src, question: answered.question || '', answer: answered.answer, answered_at: answered.answered_at, type: answered.renderer },
+            // Idempotency guard: ignore duplicate answered events for a card
+            // that's already resolving (prevents disappear/reappear flicker).
+            if (resolvingRef.current.has(answered.id)) break;
+            resolvingRef.current.add(answered.id);
+            const isAuto = answered.via === 'caller-timeout' || answered.via === 'rule_auto_answer';
+            // Don't yank the card immediately — flag it resolved so it can
+            // display the resolution. Agent auto-picks (timeouts) linger
+            // longer (10s) so the human can see what the agent chose;
+            // human answers fade quickly (3.5s).
+            const lingerMs = isAuto ? 10000 : 3500;
+            setNotifications((prev) => {
+              const exists = prev.some((n) => n.id === answered.id);
+              if (exists) {
+                return prev.map((n) =>
+                  n.id === answered.id
+                    ? { ...n, _resolved: { answer: answered.answer, note: answered.note, via: answered.via }, _lingerMs: lingerMs }
+                    : n
+                );
+              }
+              // Card wasn't in the local list (posted before this tab opened,
+              // or dropped by a sync) — inject a resolved card so the
+              // resolution still shows briefly before fading.
+              return [
+                {
+                  id: answered.id,
+                  agent_name: answered.src,
+                  agent: answered.src,
+                  sender: answered.src,
+                  question: answered.question || '',
+                  question_type: answered.renderer,
+                  urgency: 3,
+                  _resolved: { answer: answered.answer, note: answered.note, via: answered.via },
+                  _lingerMs: lingerMs,
+                },
+                ...prev,
+              ];
+            });
+            // Remove it after the resolution has been visible.
+            setTimeout(() => {
+              setNotifications((prev) => prev.filter((n) => n.id !== answered.id));
+              setFocused((f) => (f && f.id === answered.id) ? null : f);
+              resolvingRef.current.delete(answered.id);
+            }, lingerMs);
+            // Add to history immediately.
+            setHistory((prev) => dedupeById([
+              { id: answered.id, agent_name: answered.src, question: answered.question || '', answer: answered.answer, answered_at: answered.answered_at, type: answered.renderer, note: answered.note },
               ...prev,
-            ]);
+            ]));
             break;
+          }
           case 'notification_cancelled':
             setNotifications((prev) => prev.filter((n) => n.id !== event.id));
             break;
@@ -399,9 +516,12 @@ function App() {
         .then((state) => {
           setNotifications((prev) => {
             const serverIds = new Set((state.notifications || []).map((n) => n.id));
-            return prev.filter((n) => serverIds.has(n.id));
+            // Keep cards that are still open on the server, AND keep any
+            // card currently showing its resolution overlay — those are
+            // removed by their own linger timer, not by the sync.
+            return prev.filter((n) => serverIds.has(n.id) || n._resolved);
           });
-          setHistory(state.history || []);
+          setHistory(dedupeById(state.history || []));
           setRules(state.rules || []);
           setAgents(state.agents || {});
           window.AGENTS = state.agents || {};
@@ -518,12 +638,12 @@ function App() {
       }
       setNotifications((prev) => prev.filter((x) => x.id !== n.id));
       if (!isSkip) {
-        setHistory((prev) => [
+        setHistory((prev) => dedupeById([
           { id: n.id, agent_name: n.agent_name || n.agent, question: n.question,
             answer: typeof val === 'string' ? val : String(val), type: n.question_type || n.type,
-            answeredAt: new Date().toISOString(), note },
+            answered_at: new Date().toISOString(), note },
           ...prev,
-        ]);
+        ]));
       }
       setFocused(null);
       if (!isSkip) {

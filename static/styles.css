@@ -418,7 +418,7 @@ button { font-family: inherit; }
 }
 .card .kbd-marker {
   position: absolute;
-  top: 14px; right: 14px;
+  bottom: 14px; right: 14px;
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 600;
@@ -433,6 +433,7 @@ button { font-family: inherit; }
   opacity: 0;
   transform: scale(0.9);
   transition: opacity .15s, transform .15s;
+  z-index: 2;
 }
 .card.is-selected .kbd-marker { opacity: 1; transform: scale(1); }
 
@@ -560,6 +561,91 @@ button { font-family: inherit; }
   display: flex; align-items: center; gap: 4px;
 }
 .card.u4 .deadline, .card.u5 .deadline { color: var(--hot); }
+
+/* Live countdown states */
+.card .deadline.cd .num,
+.card .deadline.cd { font-variant-numeric: tabular-nums; }
+.card .deadline.cd.urgent {
+  color: var(--hot);
+  font-weight: 600;
+  animation: cdPulse 1s ease-in-out infinite;
+}
+.card .deadline.cd.expired {
+  color: var(--siren);
+  font-weight: 600;
+}
+@keyframes cdPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Resolution overlay: shown briefly when a card is answered/auto-resolved,
+   then the whole card fades + collapses away. */
+.card.is-resolving {
+  pointer-events: none;
+  animation: cardResolveOut .6s ease forwards;
+  animation-delay: var(--fade-delay, 2.9s);
+}
+@keyframes cardResolveOut {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.96) translateY(-6px); }
+}
+.card .card-resolved {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  /* Opaque base (page bg) + surface tint so the card's original content
+     is fully hidden behind the resolution overlay. */
+  background:
+    linear-gradient(180deg, var(--surf-3) 0%, var(--surf) 100%),
+    var(--bg-1);
+  border-radius: var(--r-l);
+  animation: resolvedIn .35s cubic-bezier(.3,.9,.4,1);
+}
+@keyframes resolvedIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.card .card-resolved-mark {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  border-radius: 999px;
+  display: grid; place-items: center;
+  background: var(--lime);
+  color: #0a0a0a;
+  font-size: 18px; font-weight: 700;
+}
+.card .card-resolved-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.card .card-resolved-kicker {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--lime); font-weight: 600;
+}
+.card .card-resolved-answer {
+  font-size: 17px; font-weight: 700; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.card .card-resolved-note {
+  font-size: 12px; color: var(--ink-2); font-style: italic;
+}
+
+/* Agent auto-picked (timeout / rule) — visually distinct from a human answer */
+.card .card-resolved.is-auto {
+  background:
+    linear-gradient(180deg, rgba(184,157,255,0.18) 0%, rgba(184,157,255,0.04) 100%),
+    var(--bg-1);
+  border: 1px solid rgba(184,157,255,0.45);
+}
+.card .card-resolved.is-auto .card-resolved-mark {
+  background: var(--violet);
+  color: #0a0a0a;
+}
+.card .card-resolved.is-auto .card-resolved-kicker {
+  color: var(--violet);
+}
 
 .card .preview-row {
   display: flex; flex-wrap: wrap; gap: 4px;

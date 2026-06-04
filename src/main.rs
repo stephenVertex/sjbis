@@ -82,6 +82,7 @@ async fn main() -> Result<()> {
         cli::Commands::List { json } => cmd_list(json).await,
         cli::Commands::Cancel { id } => cmd_cancel(id).await,
         cli::Commands::Dismiss { id } => cmd_dismiss(id).await,
+        cli::Commands::Answer { id, answer, via, note } => cmd_answer(id, answer, via, note).await,
         cli::Commands::Wait { id } => cmd_wait(id).await,
         cli::Commands::Status { id } => cmd_status(id).await,
         cli::Commands::Rule { command } => cmd_rule(command).await,
@@ -360,6 +361,26 @@ async fn cmd_dismiss(id: String) -> Result<()> {
     Ok(())
 }
 
+async fn cmd_answer(id: String, answer: String, via: String, note: Option<String>) -> Result<()> {
+    let url = cli::daemon_url(None);
+    let client = reqwest::Client::new();
+    let mut body = serde_json::json!({ "answer": answer, "via": via });
+    if let Some(n) = note {
+        body["note"] = serde_json::Value::String(n);
+    }
+    let resp = client
+        .post(format!("{}/answer/{}", url, id))
+        .json(&body)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("daemon error: {}", resp.text().await.unwrap_or_default());
+    }
+    let envelope: AnswerEnvelope = resp.json().await?;
+    println!("{}", serde_json::to_string_pretty(&envelope)?);
+    Ok(())
+}
+
 async fn cmd_wait(id: String) -> Result<()> {
     let url = cli::daemon_url(None);
     let client = reqwest::Client::new();
@@ -564,6 +585,31 @@ async fn cmd_prime() -> Result<()> {
     let help_body = r#"  The surfacer is a dashboard where humans see and answer questions
   from agents (scripts, tools, AI systems). Agents post questions via
   the CLI. The daemon must be running first.
+
+DEFAULT WORKING AGREEMENT FOR QUESTIONS  (how YOU, the agent, must behave)
+  When you have a question for Stephen, the default mode of operation is:
+
+    1. Ask it as a BLOCKING question with a 1-MINUTE deadline:
+         sjbis ask --question "..." --yesno --blocking --deadline 1m \
+           --agent-name <you>
+
+    2. Wait for the answer (up to 1 minute).
+
+    3. If Stephen answers, follow his answer.
+
+    4. If the 1-minute deadline is reached with NO answer, DO NOT block
+       or give up — proceed with your BEST JUDGEMENT. Pick the most
+       sensible default and continue.
+
+    5. After deciding on your own, INFORM the server so the dashboard
+       reflects what happened (and the card resolves cleanly):
+         sjbis answer <id> --answer "<your default>" --via caller-timeout \
+           --note "I didn't hear from you, so I went with <your default>."
+
+  This keeps automated workflows moving: a human gets one minute to
+  weigh in, and silence is treated as "use your judgement," not as a
+  hang. Only deviate from this default (e.g. longer deadline, truly
+  blocking, or fire-and-forget) when the situation clearly calls for it.
 
 STARTING THE DAEMON (localhost)
   sjbis daemon start --port 7878

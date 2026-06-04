@@ -31,6 +31,21 @@ pub enum Commands {
         /// Notification id
         id: String,
     },
+    /// Answer a question on behalf of the caller (e.g. after a timeout,
+    /// the agent proceeds with its best judgement and informs the server)
+    Answer {
+        /// Notification id
+        id: String,
+        /// The answer value to record
+        #[arg(long)]
+        answer: String,
+        /// How the answer was produced (default: caller)
+        #[arg(long, default_value = "caller")]
+        via: String,
+        /// Optional free-text note shown on the dashboard and returned to the caller
+        #[arg(long)]
+        note: Option<String>,
+    },
     /// Wait for an answer to a previously-posted question
     Wait {
         /// Notification id
