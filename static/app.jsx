@@ -172,6 +172,7 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef }) 
         title="Dismiss without reply (d)"
         onClick={(e) => { e.stopPropagation(); onDismiss(n.id); }}
       >
+        <span className="card-dismiss-label">dismiss</span>
         <span className="k">d</span>
       </button>
       <div className="card-hd">

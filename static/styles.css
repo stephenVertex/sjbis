@@ -418,7 +418,8 @@ button { font-family: inherit; }
 }
 .card .kbd-marker {
   position: absolute;
-  bottom: 14px; right: 14px;
+  bottom: 14px; left: 50%;
+  transform: translateX(-50%) scale(0.9);
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 600;
@@ -431,11 +432,10 @@ button { font-family: inherit; }
   text-transform: uppercase;
   pointer-events: none;
   opacity: 0;
-  transform: scale(0.9);
   transition: opacity .15s, transform .15s;
   z-index: 2;
 }
-.card.is-selected .kbd-marker { opacity: 1; transform: scale(1); }
+.card.is-selected .kbd-marker { opacity: 1; transform: translateX(-50%) scale(1); }
 
 @keyframes sirenHalo {
   0%, 100% { box-shadow: 0 0 0 1px rgba(255,31,77,0.3), 0 0 40px rgba(255,31,77,0.15), 0 12px 36px rgba(0,0,0,0.4); }
@@ -488,6 +488,7 @@ button { font-family: inherit; }
   text-transform: uppercase;
   padding: 3px 7px;
   border-radius: 999px;
+  transition: opacity 0.15s;
 }
 .urg-1 { color: var(--calm);  background: rgba(91,212,255,0.10); }
 .urg-2 { color: var(--calm);  background: rgba(91,212,255,0.12); }
@@ -1610,13 +1611,29 @@ button { font-family: inherit; }
   appearance: none; border: 0; background: transparent;
   font-family: var(--mono); font-size: 11px;
   color: var(--ink-3); cursor: pointer;
+  display: flex; align-items: center; gap: 5px;
   opacity: 0;
   transition: opacity 0.15s;
   z-index: 2;
 }
+.card-dismiss-label {
+  font-family: var(--mono); font-size: 10px;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.card-dismiss .k {
+  font-family: var(--mono); font-size: 10px; line-height: 1;
+  background: var(--ink-3); color: var(--bg);
+  border-radius: 4px; padding: 2px 5px;
+}
 .card:hover .card-dismiss,
 .card.is-selected .card-dismiss {
   opacity: 1;
+}
+/* The dismiss button shares the top-right with the urgency badge; hide the
+   badge while the dismiss affordance is showing so they don't crowd. */
+.card:hover .card-hd .urgency,
+.card.is-selected .card-hd .urgency {
+  opacity: 0;
 }
 .card-dismiss:hover {
   color: var(--ink-1);
