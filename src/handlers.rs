@@ -41,6 +41,16 @@ pub async fn health() -> &'static str {
     "ok"
 }
 
+/// GET /version — build/version info
+pub async fn version() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "version": crate::version::PKG_VERSION,
+        "git": crate::version::GIT_HASH,
+        "full": crate::version::full(),
+        "build_time": crate::version::build_time_rfc3339(),
+    }))
+}
+
 /// GET /state — full dashboard init payload
 pub async fn get_state(State(state): State<AppState>) -> Result<Json<DashboardState>, (StatusCode, Json<serde_json::Value>)> {
     let notifications = state.db.list_open_notifications().await.map_err(db_err)?;
@@ -56,6 +66,7 @@ pub async fn get_state(State(state): State<AppState>) -> Result<Json<DashboardSt
         history,
         rules,
         agents,
+        version: crate::version::full(),
     }))
 }
 
@@ -727,15 +738,54 @@ pub async fn wait_for_answer(
         waiters.insert(id.clone(), tx);
     }
 
-    // Wait with a timeout (default 5 minutes)
-    match tokio::time::timeout(std::time::Duration::from_secs(300), rx).await {
+    // Cap the wait at the notification's deadline (if any), so `--blocking`
+    // honors --deadline. Fall back to a generous ceiling otherwise.
+    const MAX_WAIT: i64 = 600; // hard ceiling (seconds) for deadline-less waits
+    let wait_secs: i64 = {
+        let deadline = state.db.get_notification(&id).await.ok().flatten().and_then(|n| n.deadline);
+        match deadline {
+            Some(dl) => {
+                let remaining = (dl - Utc::now()).num_seconds();
+                remaining.clamp(0, MAX_WAIT)
+            }
+            None => MAX_WAIT,
+        }
+    };
+
+    match tokio::time::timeout(std::time::Duration::from_secs(wait_secs.max(0) as u64), rx).await {
         Ok(Ok(envelope)) => Ok(Json(envelope)),
         Ok(Err(_)) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "waiter cancelled"})))),
         Err(_) => {
-            // Timeout: clean up waiter
-            let mut waiters = state.waiters.lock().await;
-            waiters.remove(&id);
-            Err((StatusCode::REQUEST_TIMEOUT, Json(serde_json::json!({"error": "timeout waiting for answer"}))))
+            // Deadline reached with no answer. Clean up the waiter, mark the
+            // notification timed_out, broadcast so the dashboard reflects it,
+            // and return a STRUCTURED timeout envelope (HTTP 200) so blocking
+            // callers can apply their own best judgement.
+            {
+                let mut waiters = state.waiters.lock().await;
+                waiters.remove(&id);
+            }
+            let notif = state.db.get_notification(&id).await.ok().flatten();
+            // Only transition if still open (a human may have just answered).
+            if let Some(ref n) = notif {
+                if n.status == NotificationStatus::Open {
+                    let _ = state.db.update_status(&id, NotificationStatus::TimedOut).await;
+                }
+            }
+            let renderer = notif.as_ref().map(|n| n.question_type.to_string()).unwrap_or_default();
+            let src = notif.as_ref().map(|n| n.src.clone()).unwrap_or_default();
+            let envelope = AnswerEnvelope {
+                id: id.clone(),
+                answer: None,
+                answer_label: None,
+                answered_at: Some(Utc::now()),
+                latency_ms: None,
+                renderer,
+                src,
+                via: "timed_out".to_string(),
+                note: None,
+            };
+            state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
+            Ok(Json(envelope))
         }
     }
 }

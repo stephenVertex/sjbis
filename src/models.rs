@@ -347,6 +347,8 @@ pub struct DashboardState {
     pub history: Vec<Notification>,
     pub rules: Vec<Rule>,
     pub agents: HashMap<String, Agent>,
+    #[serde(default)]
+    pub version: String,
 }
 
 /// Parsed deadline string: either duration ("6m", "2h") or absolute timestamp

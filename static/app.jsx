@@ -307,12 +307,15 @@ function CommandBar({ onAddRule }) {
   );
 }
 
-function History({ items, onReplay }) {
+function History({ items, onReplay, onHide }) {
   return (
     <div className="history">
       <div className="history-hd">
         <span>Recent · answered</span>
-        <span className="replay" onClick={onReplay}>↻ replay</span>
+        <span className="hist-actions">
+          <span className="replay" onClick={onReplay}>↻ replay</span>
+          <span className="hist-hide" title="Hide history (H)" onClick={onHide}>✕</span>
+        </span>
       </div>
       {items.map((h) => (
         <div key={h.id} className="h-item" style={{ '--agent': window.agentColor(h.agent_name || h.agent) }}>
@@ -362,7 +365,14 @@ function App() {
   const [focused, setFocused] = React.useState(null);
   const [burst, setBurst] = React.useState(null);
   const [selectedIdx, setSelectedIdx] = React.useState(0);
+  const [historyHidden, setHistoryHidden] = React.useState(
+    () => localStorage.getItem('sjbis.historyHidden') === '1'
+  );
+  React.useEffect(() => {
+    localStorage.setItem('sjbis.historyHidden', historyHidden ? '1' : '0');
+  }, [historyHidden]);
   const [connected, setConnected] = React.useState(false);
+  const [version, setVersion] = React.useState('');
   const cardRefs = React.useRef({});
   // Tracks notification ids currently showing their resolution overlay, so
   // duplicate notification_answered events (reconnects, replays) don't reset
@@ -383,6 +393,7 @@ function App() {
         setHistory(dedupeById(state.history || []));
         setRules(state.rules || []);
         setAgents(state.agents || {});
+        if (state.version) setVersion(state.version);
         window.AGENTS = state.agents || {};
 
         // Deep-link: if q_id is in URL, focus that notification
@@ -586,6 +597,12 @@ function App() {
     const onKey = (e) => {
       if (focused) return;
       if (isTyping(e.target)) return;
+      // Toggle history sidebar (works even with no open cards)
+      if (e.key.toLowerCase() === 'h') {
+        e.preventDefault();
+        setHistoryHidden((v) => !v);
+        return;
+      }
       if (visible.length === 0) return;
       const key = e.key.toLowerCase();
       if (key === 'j' || e.key === 'ArrowDown') {
@@ -682,12 +699,12 @@ function App() {
   return (
     <>
       <div className="field" />
-      <div className={'app' + (t.textRail ? ' text-rail' : '')}>
+      <div className={'app' + (t.textRail ? ' text-rail' : '') + (historyHidden ? ' history-hidden' : '')}>
         <div className="topbar">
           <div className="brand">
             <span className="dot" />
             <span>sjbis</span>
-            <span className="sub">information surfacer · v0.1{connected ? '' : ' · offline'}</span>
+            <span className="sub">information surfacer{version ? ` · ${version}` : ' · v0.1'}{connected ? '' : ' · offline'}</span>
           </div>
           <CommandBar onAddRule={apiAddRule} />
           <LiveClock />
@@ -753,7 +770,22 @@ function App() {
           </div>
         </div>
 
-        <History items={history} onReplay={() => setBurst({ text: 'replay queued', color: 'var(--calm)' })} />
+        {!historyHidden && (
+          <History
+            items={history}
+            onReplay={() => setBurst({ text: 'replay queued', color: 'var(--calm)' })}
+            onHide={() => setHistoryHidden(true)}
+          />
+        )}
+        {historyHidden && (
+          <button
+            className="history-show"
+            title="Show history (H)"
+            onClick={() => setHistoryHidden(false)}
+          >
+            ‹ History
+          </button>
+        )}
       </div>
 
       {focused && (

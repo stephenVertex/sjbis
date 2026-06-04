@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "sjbis")]
 #[command(about = "SJBIS — Stephen J Barr Information Surfacer")]
-#[command(version = "0.1.0")]
+#[command(version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("SJBIS_GIT_HASH")))]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

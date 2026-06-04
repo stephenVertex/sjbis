@@ -7,6 +7,7 @@ mod models;
 mod router;
 mod rules;
 mod sse;
+mod version;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -283,13 +284,17 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
     let notif: Notification = resp.json().await.context("failed to parse daemon response")?;
 
     if args.blocking {
-        // Blocking mode: poll SSE or poll /list until answered or timed out
-        println!("Waiting for answer... (id: {})", notif.id);
+        // Blocking mode: the daemon returns when answered OR when the
+        // --deadline is reached (structured timed_out envelope).
+        // Progress goes to stderr so --json stdout stays pure JSON.
+        eprintln!("Waiting for answer... (id: {})", notif.id);
         let answer = wait_for_answer(&client, &url, &notif.id).await?;
         if args.json {
             println!("{}", serde_json::to_string_pretty(&answer)?);
+        } else if answer.via == "timed_out" {
+            println!("(timed out — no answer before deadline)");
         } else {
-            println!("{}", answer.answer.unwrap_or_default());
+            println!("{}", answer.answer.clone().unwrap_or_default());
         }
     } else {
         if args.json {
@@ -302,10 +307,13 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
 }
 
 async fn wait_for_answer(client: &reqwest::Client, url: &str, id: &str) -> Result<AnswerEnvelope> {
-    // Use the server's blocking wait endpoint
+    // The server caps its wait at the notification's deadline (or a 600s
+    // ceiling). Use a slightly larger request timeout so the server always
+    // returns the structured result (answered OR timed_out) rather than the
+    // client aborting first.
     let resp = client
         .get(format!("{}/wait/{}", url, id))
-        .timeout(std::time::Duration::from_secs(360))
+        .timeout(std::time::Duration::from_secs(660))
         .send()
         .await?;
     if !resp.status().is_success() {
@@ -501,24 +509,30 @@ async fn cmd_rule(command: cli::RuleCommands) -> Result<()> {
     Ok(())
 }
 
+/// Spawn a detached background daemon process on the given port.
+/// Writes the pidfile and returns the child pid.
+fn spawn_background_daemon(port: u16) -> Result<u32> {
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("daemon").arg("start").arg("--port").arg(port.to_string());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let child = cmd.spawn()?;
+    let pid = child.id();
+    std::fs::write(cli::pidfile_path(), pid.to_string())?;
+    Ok(pid)
+}
+
 async fn cmd_daemon(command: cli::DaemonCommands) -> Result<()> {
     match command {
         cli::DaemonCommands::Start { port, background } => {
             if background {
-                // Spawn detached process
-                let exe = std::env::current_exe()?;
-                let mut cmd = std::process::Command::new(exe);
-                cmd.arg("daemon").arg("start").arg("--port").arg(port.to_string());
-                cmd.stdout(std::process::Stdio::null());
-                cmd.stderr(std::process::Stdio::null());
-                #[cfg(unix)]
-                {
-                    use std::os::unix::process::CommandExt;
-                    cmd.process_group(0);
-                }
-                let child = cmd.spawn()?;
-                let pid = child.id();
-                std::fs::write(cli::pidfile_path(), pid.to_string())?;
+                let pid = spawn_background_daemon(port)?;
                 println!("Daemon started on port {} (pid {})", port, pid);
             } else {
                 // Run inline
@@ -571,15 +585,52 @@ async fn cmd_daemon(command: cli::DaemonCommands) -> Result<()> {
 async fn cmd_prime() -> Result<()> {
     let url = cli::daemon_url(None);
     let client = reqwest::Client::new();
-    let daemon_ok = match client.get(format!("{}/health", url)).timeout(std::time::Duration::from_secs(2)).send().await {
-        Ok(resp) if resp.status().is_success() => true,
-        _ => false,
+
+    let health_ok = |url: &str| {
+        let client = client.clone();
+        let url = url.to_string();
+        async move {
+            matches!(
+                client.get(format!("{}/health", url)).timeout(std::time::Duration::from_secs(2)).send().await,
+                Ok(resp) if resp.status().is_success()
+            )
+        }
     };
 
+    let mut daemon_ok = health_ok(&url).await;
+
+    // If the daemon isn't responding AND it's a local URL, auto-start it.
+    // Remote daemons (e.g. on another host) can't be started from here.
+    let is_local = url.contains("localhost") || url.contains("127.0.0.1") || url.contains("0.0.0.0");
+    let mut autostart_note = String::new();
+    if !daemon_ok && is_local {
+        let port = url.rsplit(':').next().and_then(|s| s.trim_end_matches('/').parse::<u16>().ok()).unwrap_or(7878);
+        match spawn_background_daemon(port) {
+            Ok(pid) => {
+                // Give it a moment to bind and run migrations.
+                for _ in 0..10 {
+                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                    if health_ok(&url).await { break; }
+                }
+                daemon_ok = health_ok(&url).await;
+                autostart_note = if daemon_ok {
+                    format!(" (auto-started, pid {})", pid)
+                } else {
+                    format!(" (auto-start attempted, pid {}, still coming up)", pid)
+                };
+            }
+            Err(e) => {
+                autostart_note = format!(" (auto-start failed: {})", e);
+            }
+        }
+    }
+
     let status_banner = if daemon_ok {
-        format!("  Daemon: running on {}", url)
+        format!("  Daemon: running on {}{}", url, autostart_note)
+    } else if is_local {
+        format!("  Daemon: NOT RUNNING on {}{} — start manually with: sjbis daemon start --port 7878", url, autostart_note)
     } else {
-        "  Daemon: NOT RUNNING — start it with: sjbis daemon start --port 7878".to_string()
+        format!("  Daemon: UNREACHABLE at {} (remote — start it on that host)", url)
     };
 
     let help_body = r#"  The surfacer is a dashboard where humans see and answer questions
@@ -587,90 +638,74 @@ async fn cmd_prime() -> Result<()> {
   the CLI. The daemon must be running first.
 
 DEFAULT WORKING AGREEMENT FOR QUESTIONS  (how YOU, the agent, must behave)
-  When you have a question for Stephen, the default mode of operation is:
+  When you have a question for Stephen, ask it as a BLOCKING question
+  with a deadline. The daemon honors the deadline: it returns as soon as
+  Stephen answers, or returns a timed_out result when the deadline hits.
+  You do NOT need to build your own wait/poll loop.
 
-    1. Ask it as a BLOCKING question with a 1-MINUTE deadline:
-         sjbis ask --question "..." --yesno --blocking --deadline 1m \
-           --agent-name <you>
+  Copy-paste pattern (1-minute deadline; adjust as needed):
 
-    2. Wait for the answer (up to 1 minute).
+    # 1. Ask, blocking, with a deadline. --json gives a structured result.
+    res=$(sjbis ask --question "..." --choices "a,b,c" \
+            --agent-name <you> --deadline 1m --blocking --json)
 
-    3. If Stephen answers, follow his answer.
+    # 2. Read the result. `via` is "timed_out" if the deadline passed
+    #    with no answer; otherwise `answer` holds Stephen's choice.
+    ans=$(echo "$res" | python3 -c 'import sys,json
+d=json.load(sys.stdin)
+print("" if d.get("via")=="timed_out" else (d.get("answer") or ""))')
 
-    4. If the 1-minute deadline is reached with NO answer, DO NOT block
-       or give up — proceed with your BEST JUDGEMENT. Pick the most
-       sensible default and continue.
+    # 3. If Stephen answered, follow his answer.
+    # 4. If it timed out (ans is empty), DO NOT give up — proceed with
+    #    your BEST JUDGEMENT, then INFORM the server so the dashboard
+    #    shows the auto-pick (lingers ~10s, marked "agent auto-picked"):
+    if [ -z "$ans" ]; then
+      id=$(echo "$res" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+      ans="<your sensible default>"
+      sjbis answer "$id" --answer "$ans" --via caller-timeout \
+        --note "No reply in time — went with <your default> because <why>."
+    fi
 
-    5. After deciding on your own, INFORM the server so the dashboard
-       reflects what happened (and the card resolves cleanly):
-         sjbis answer <id> --answer "<your default>" --via caller-timeout \
-           --note "I didn't hear from you, so I went with <your default>."
+  Notes:
+    * --blocking + --deadline is the intended flow; the daemon caps the
+      wait at the deadline, so the command returns promptly. No manual
+      polling needed.
+    * Always pass --json so you can read `via` (answered vs timed_out)
+      and `id` (needed to record an auto-pick).
+    * For a chain of path-dependent questions, repeat this per question,
+      branching on the previous answer. Ask ONE question at a time.
+    * `--via caller-timeout` is what makes the dashboard render your
+      decision as an agent auto-pick rather than a human answer.
 
-  This keeps automated workflows moving: a human gets one minute to
-  weigh in, and silence is treated as "use your judgement," not as a
-  hang. Only deviate from this default (e.g. longer deadline, truly
-  blocking, or fire-and-forget) when the situation clearly calls for it.
+  This keeps automated workflows moving: the human gets the deadline to
+  weigh in, and silence is treated as "use your judgement," not a hang.
 
-STARTING THE DAEMON (localhost)
-  sjbis daemon start --port 7878
-  sjbis daemon start --port 7878 --background
-
-DEPLOYMENT (server with systemd)
-
-  1. Build fully static binary (zero runtime deps, runs on any Linux):
-       cargo zigbuild --target x86_64-unknown-linux-musl --release
-     Binary: target/x86_64-unknown-linux-musl/release/sjbis (~7.8MB)
-
-  2. On the server:
-       mkdir -p ~/sjbis ~/.config/sjbis
-       scp sjbis server:~/sjbis/
-       rsync -av static/ server:~/sjbis/static/
-       cat > ~/.config/sjbis/database.toml << 'TOML'
-       [database]
-       dsn = "postgresql://user:pass@host:5432/sjbis"
-       TOML
-
-  3. Create ~/.config/systemd/user/sjbis.service:
-       [Unit]
-       Description=SJBIS
-       After=network-online.target
-       Wants=network-online.target
-
-       [Service]
-       Type=simple
-       WorkingDirectory=%h/sjbis
-       ExecStart=%h/sjbis/sjbis daemon start --port 7878
-       Restart=on-failure
-       RestartSec=5
-
-       [Install]
-       WantedBy=default.target
-
-  4. Enable and start:
-       systemctl --user daemon-reload
-       systemctl --user enable sjbis
-       systemctl --user start sjbis
-
-  5. Management:
-       systemctl --user status sjbis     # health check
-       systemctl --user restart sjbis    # restart (e.g. after upgrade)
-       systemctl --user stop sjbis       # stop
-       journalctl --user -u sjbis -f     # follow logs
-
-     The service auto-starts on user login and auto-restarts on crash.
+DAEMON
+  `sjbis prime` auto-starts a LOCAL daemon if one isn't already running
+  (see the status line at the top of this output). A remote daemon must
+  be started on its own host. Manual control / deployment (systemd, etc.)
+  is documented in the project README.
 
 POSTING A QUESTION (fire-and-forget)
   sjbis ask --question "Deploy to prod?" --yesno --agent-name deploybot
   sjbis ask --question "Lunch cuisine?" --choices "thai,indian,salad" --agent-name lunchbot
 
 POSTING A QUESTION (synchronous / blocking)
-  Add --blocking to wait for the human answer. The command does not
-  return until the user responds on the dashboard or the deadline hits.
+  Add --blocking to wait for the human answer. With --deadline set, the
+  daemon caps the wait at the deadline and returns a structured
+  timed_out result if no answer arrives — so the command returns
+  promptly, not after a long hang.
 
-  sjbis ask --question "Approve PR #412?" --yesno --blocking --agent-name codebot
+  sjbis ask --question "Approve PR #412?" --yesno --blocking \
+    --deadline 1m --agent-name codebot
 
   The answer is printed to stdout when it arrives. Use --json for
-  structured output (includes latency_ms, answer_label, etc.).
+  structured output: check `via` ("timed_out" vs a real answer),
+  plus latency_ms, answer_label, etc. On timeout, follow the DEFAULT
+  WORKING AGREEMENT above (apply best judgement, then `sjbis answer
+  <id> --via caller-timeout` to record it).
+
+  Without --deadline, a blocking wait can stay open up to ~10 minutes.
 
 READING THE ANSWER
   Always check the `note` field in the response. Humans can attach a
@@ -773,7 +808,7 @@ LIST / STATUS / CANCEL / DISMISS
   sjbis cancel sjbis-AbCdEfGh   Cancel an open notification
   sjbis dismiss sjbis-AbCdEfGh  Dismiss (mark as seen without answering — no reply sent)
 "#;
-    println!("SJBIS — How to ask questions\n\n{}\n\n{}", status_banner, help_body);
+    println!("SJBIS — How to ask questions  (cli {})\n\n{}\n\n{}", version::full(), status_banner, help_body);
     Ok(())
 }
 

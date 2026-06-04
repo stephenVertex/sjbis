@@ -53,6 +53,7 @@ pub async fn run_daemon(
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/version", get(version))
         .route("/state", get(get_state))
         .route("/ask", post(ask))
         .route("/answer/{id}", post(answer))
@@ -73,7 +74,7 @@ pub async fn run_daemon(
         .with_state(state);
 
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
-    tracing::info!("sjbis daemon listening on http://{}", addr);
+    tracing::info!("sjbis {} daemon listening on http://{}", crate::version::full(), addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
