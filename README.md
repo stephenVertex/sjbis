@@ -443,6 +443,21 @@ effect:
 systemctl --user restart sjbis
 ```
 
+Or use the helper script, which runs `sjbis upgrade` on the daemon host,
+refreshes the dashboard assets, restarts the service, and runs health checks:
+
+```bash
+./update-dertog.sh            # update dertog to the latest release
+./update-dertog.sh v0.1.3     # update to a specific tag
+```
+
+`update-dertog.sh` is the release-driven counterpart to `build-and-deploy.sh`:
+use `update-dertog.sh` to pull a published release, and `build-and-deploy.sh`
+when you want to push your local working tree straight to the host without
+cutting a release. The remote must already have a `sjbis` new enough to have
+the `upgrade` subcommand (≥ 0.1.2); for a first install on an older box, run
+`build-and-deploy.sh` once.
+
 ### Release builds (CI)
 
 Release assets are produced by `.github/workflows/release.yml`, triggered on a
