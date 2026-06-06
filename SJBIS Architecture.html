@@ -22,7 +22,7 @@
   <div class="brand">
     <span class="dot"></span>
     <span>sjbis</span>
-    <span class="sub">design doc · cli + architecture · v0.4</span>
+    <span class="sub">design doc · cli + architecture · v0.4 (annotated against as-built)</span>
   </div>
   <h1>A <span class="accent">universal information plane</span><br/>any tool can call.</h1>
   <p class="subtitle">
@@ -35,14 +35,26 @@
     <div>
       <p>
         Any process emits a single <code>sjbis ask</code> command with a question
-        and an answer shape. A local daemon receives it, asks an LLM to fill in
-        the gaps (urgency hints, the right renderer, identity, deduping), pushes
-        it to your dashboard, and waits for an answer.
+        and an answer shape. A daemon receives it (over HTTP), optionally asks an
+        LLM to fill in the gaps (urgency hints, the right renderer, deduping),
+        pushes it to your dashboard, and waits for an answer.
       </p>
       <p>
         Your end of the contract: a typed answer comes back on the caller's chosen
         channel — stdout, exit code, webhook, or a file you watch. Or a timeout. Or
         a structured "muted" signal if your rules said to drop it.
+      </p>
+      <p style="margin-top:14px;padding:12px 14px;border-left:3px solid var(--warm);background:rgba(255,179,65,0.06);border-radius:0 8px 8px 0;">
+        <strong style="color:var(--warm)">As-built note (June 2026).</strong>
+        This is the original v0.4 design doc. The shipping implementation differs
+        from parts of it; the corrected facts are called out inline in
+        <span style="color:var(--warm)">amber as-built notes</span>. In short: the
+        daemon talks <strong>HTTP/JSON over a LAN host (not a Unix socket / gRPC)</strong>,
+        persists to <strong>PostgreSQL (not SQLite)</strong>, and is reached by a
+        <strong>plain host URL configured in <code>daemon.toml</code> (Tailscale,
+        device-identity auth, and bearer tokens are not yet implemented)</strong>.
+        Sections describing SDKs, agent registration/tokens, gRPC multiplexing, and
+        voice/watch clients are <em>planned</em>, not built.
       </p>
     </div>
   </div>
@@ -131,20 +143,32 @@
       <span>Subcommands</span>
       <span class="desc">The verb. Defaults to <code>ask</code> if omitted.</span>
     </div>
-    <div class="row k"><span>ask</span><span class="type">default</span></div>
-    <div class="row v">Post a new question. Returns an id immediately, blocks for an answer if <code>--blocking</code>.</div>
-    <div class="row k"><span>update &lt;id&gt;</span><span class="type">verb</span></div>
-    <div class="row v">Mutate an in-flight notification — change urgency, extend deadline, replace detail text. Useful for long-running jobs that learn more as they go.</div>
+    <div class="row k"><span>ask</span><span class="type">verb</span></div>
+    <div class="row v">Post a new question. Returns an id immediately, blocks for an answer if <code>--blocking</code>. (No implicit default verb — <code>ask</code> must be named.)</div>
+    <div class="row k"><span>answer &lt;id&gt;</span><span class="type">verb</span></div>
+    <div class="row v">Record an answer on behalf of the caller — e.g. after a deadline times out, the agent proceeds with its best judgement and informs the server (<code>--answer</code>, <code>--via</code>, <code>--note</code>). <span class="eg" style="color:var(--warm)">as-built: replaces the doc's <code>update</code> verb, which is not implemented.</span></div>
     <div class="row k"><span>cancel &lt;id&gt;</span><span class="type">verb</span></div>
     <div class="row v">Withdraw a question. If already answered, no-op. If unanswered, removed from dashboard.</div>
+    <div class="row k"><span>dismiss &lt;id&gt;</span><span class="type">verb</span></div>
+    <div class="row v">Mark a notification as seen without answering. No reply is sent to the caller; blocking waiters wake with an empty answer.</div>
     <div class="row k"><span>wait &lt;id&gt;</span><span class="type">verb</span></div>
     <div class="row v">Reattach to a previously-posted question and block. Lets you fire-and-poll across processes.</div>
+    <div class="row k"><span>status &lt;id&gt;</span><span class="type">verb</span></div>
+    <div class="row v">Print the current state of a notification (open / answered / cancelled / timed_out / dismissed).</div>
     <div class="row k"><span>list</span><span class="type">verb</span></div>
-    <div class="row v">Dump open notifications as JSON. Useful for debugging or for an agent inspecting its own queue.</div>
-    <div class="row k"><span>rule add | rule list | rule rm</span><span class="type">verb</span></div>
-    <div class="row v">Manage rules from the CLI. <code>sjbis rule add "anything from Dana is urgent"</code>.</div>
+    <div class="row v">Dump open notifications. Add <code>--json</code> for structured output.</div>
+    <div class="row k"><span>rule add | allow | list | rm</span><span class="type">verb</span></div>
+    <div class="row v">Manage rules from the CLI. <code>sjbis rule add "anything from Dana is urgent"</code>; <code>sjbis rule allow --agent iMessage --from "Jeff,Carmen" --for-duration 1h</code>.</div>
+    <div class="row k"><span>entity add | list | show | rm</span><span class="type">verb</span></div>
+    <div class="row v">Manage named contact groups (e.g. <code>family</code>) that expand inside rules. Backed by <code>~/.config/sjbis/entities.toml</code>.</div>
+    <div class="row k"><span>register</span><span class="type">verb</span></div>
+    <div class="row v">Register an agent identity (name + optional glyph/color). <span class="eg" style="color:var(--warm)">as-built: does not issue an auth token — auth is not yet implemented.</span></div>
+    <div class="row k"><span>prime</span><span class="type">verb</span></div>
+    <div class="row v">Print the agent primer: the working agreement (<code>--blocking --deadline</code>, then auto-pick + <code>sjbis answer</code> on timeout), question types, and daemon status. Auto-starts a <em>local</em> daemon if one isn't running.</div>
+    <div class="row k"><span>upgrade</span><span class="type">verb</span></div>
+    <div class="row v">Self-update from GitHub Releases. <code>--check</code> reports availability; bare downloads + atomically replaces the binary; <code>--tag v0.1.2</code> pins a release; <code>--force</code> reinstalls.</div>
     <div class="row k"><span>daemon start | stop | status</span><span class="type">verb</span></div>
-    <div class="row v">Lifecycle of the local daemon. Idempotent — <code>ask</code> auto-spawns it if missing.</div>
+    <div class="row v">Lifecycle of the daemon. <code>start --port 7878 [--background]</code>. <span class="eg" style="color:var(--warm)">as-built: in production the daemon runs as a systemd user service on the daemon host, not auto-spawned per call.</span></div>
 
     <div class="flag-group-hd">
       <span>Core question</span>
@@ -219,24 +243,24 @@
     <div class="row k"><span>--reply-to</span><span class="type">stdout | webhook:URL | file:PATH | exit-code</span></div>
     <div class="row v">Default <code>stdout</code> when blocking, <code>exit-code</code> for ack-only, otherwise a webhook is required.</div>
     <div class="row k"><span>--json</span><span class="type">flag</span></div>
-    <div class="row v">Structured response (id, answer, timestamps, renderer used). Without it, just prints the answer label.</div>
-    <div class="row k"><span>--on-timeout</span><span class="type">enum · default <code>error</code></span></div>
-    <div class="row v"><code>error</code> · <code>default:&lt;value&gt;</code> · <code>retry:&lt;duration&gt;</code> · <code>ack</code>. Defines what happens at deadline.</div>
-    <div class="row k"><span>--on-mute</span><span class="type">enum · default <code>error</code></span></div>
-    <div class="row v">What to do if a rule drops the notification. Mirrors <code>--on-timeout</code> shape.</div>
+    <div class="row v">Structured response (id, answer, timestamps, renderer used, and <code>via</code>). Without it, just prints the answer label. <span class="eg">On a blocking call, <code>via == "timed_out"</code> means the deadline passed with no human answer.</span></div>
+    <div class="row k" style="opacity:0.6"><span>--on-timeout</span><span class="type" style="color:var(--warm)">planned · not built</span></div>
+    <div class="row v" style="opacity:0.6"><span style="color:var(--warm)">as-built: not a flag. Instead, a blocking call with <code>--deadline</code> returns a <code>timed_out</code> result; the agent then applies its best judgement and records it with <code>sjbis answer &lt;id&gt; --via caller-timeout --note "…"</code>, which the dashboard renders as an agent auto-pick.</span></div>
+    <div class="row k" style="opacity:0.6"><span>--on-mute</span><span class="type" style="color:var(--warm)">planned · not built</span></div>
+    <div class="row v" style="opacity:0.6"><span style="color:var(--warm)">as-built: not implemented as a per-call flag.</span></div>
 
     <div class="flag-group-hd">
       <span>Privacy &amp; transport</span>
       <span class="desc">Trust and where the daemon lives.</span>
     </div>
     <div class="row k"><span>--privacy</span><span class="type">public · redact-pii · private</span></div>
-    <div class="row v">Controls whether the AI router sees the full question. <code>private</code> skips AI ranking entirely (deterministic rules only).</div>
-    <div class="row k"><span>--auth-token</span><span class="type">string · env <code>SJBIS_TOKEN</code></span></div>
-    <div class="row v">Required for callers other than the same user's local processes. Issued per-caller via <code>sjbis token issue</code>.</div>
-    <div class="row k"><span>--daemon</span><span class="type">url · default <code>https://sjbis.&lt;tailnet&gt;.ts.net</code></span></div>
-    <div class="row v">Where the daemon lives. The CLI auto-discovers via <code>tailscale status --json</code> on first run and caches the URL. Override for testing or to point at a non-tailnet instance.</div>
-    <div class="row k"><span>--dry-run</span><span class="type">flag</span></div>
-    <div class="row v">Validate &amp; render-locally without sending. Returns a predicted urgency from the AI router.</div>
+    <div class="row v">Controls whether the AI router sees the full question. <code>private</code> skips AI ranking entirely (deterministic rules only). <span class="eg" style="color:var(--warm)">as-built: parsed and accepted; redact-pii masking is not yet wired up.</span></div>
+    <div class="row k"><span>--daemon</span><span class="type">url</span></div>
+    <div class="row v">Where the daemon lives. Resolution order: this flag → <code>SJBIS_DAEMON</code> env → <code>~/.config/sjbis/daemon.toml</code> (<code>url = "…"</code>) → default <code>http://localhost:7878</code>. <span class="eg">In Stephen's setup the client points at the remote daemon <code>http://192.168.0.138:7878</code> via daemon.toml. <span style="color:var(--warm)">as-built: no Tailscale MagicDNS auto-discovery — it's a plain configured URL.</span></span></div>
+    <div class="row k"><span>--id</span><span class="type">string</span></div>
+    <div class="row v">Idempotency key (also listed above). Same id within a 24h window returns the existing notification instead of duplicating.</div>
+    <div class="row k" style="opacity:0.6"><span>--auth-token</span><span class="type" style="color:var(--warm)">planned · not built</span></div>
+    <div class="row v" style="opacity:0.6">Per-caller bearer token. <span style="color:var(--warm)">as-built: there is no authentication layer yet — the daemon trusts any caller that can reach it on the LAN. Do not expose it to the public internet.</span></div>
   </div>
 </section>
 
@@ -430,7 +454,7 @@
       <rect x="240" y="320" width="150" height="80" rx="12"
             fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.18)"/>
       <text x="315" y="345" text-anchor="middle" font-family="Bricolage Grotesque" font-weight="600" font-size="15" fill="#f4f3ee">Queue + Store</text>
-      <text x="315" y="364" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="rgba(244,243,238,0.55)">SQLite + WAL</text>
+      <text x="315" y="364" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="rgba(244,243,238,0.55)">PostgreSQL</text>
       <text x="315" y="382" text-anchor="middle" font-family="Space Grotesk" font-size="11" fill="rgba(244,243,238,0.7)">history · in-flight · audit</text>
 
       <!-- Identity store -->
@@ -515,11 +539,11 @@
   <div class="comps">
     <div class="comp" style="--accent: var(--calm)">
       <h4>Ingress <span class="tag">deterministic</span></h4>
-      <p>CLI &amp; SDK frontends, a Unix domain socket, and an optional HTTP listener for cross-machine callers. Validates flags, attaches the caller's auth token, applies <code>--id</code> idempotency, and pushes onto the queue. No LLM calls here — speed matters; a stuck ingress would block agents.</p>
+      <p>The HTTP/JSON API the CLI calls. Validates flags, applies <code>--id</code> idempotency, and writes to the store. No LLM calls here — speed matters; a stuck ingress would block agents. <span style="color:var(--warm)">As-built: ingress is an axum HTTP server (routes like <code>/ask</code>, <code>/answer/{id}</code>, <code>/events</code> for SSE). There is no Unix-domain-socket or gRPC transport, and no auth token attachment yet.</span></p>
       <ul>
-        <li>p50 enqueue latency &lt; 5 ms; p99 &lt; 30 ms</li>
-        <li>Rejects malformed shape (e.g. <code>--number</code> without <code>--min/--max</code>) before queueing</li>
-        <li>Auto-spawns the daemon on first call if missing</li>
+        <li>Rejects malformed shape (e.g. <code>--number</code> without <code>--min/--max</code>) before storing</li>
+        <li>Idempotency: same <code>--id</code> within 24h returns the existing notification</li>
+        <li><span style="color:var(--warm)">Planned:</span> auto-spawn the daemon on first call (today, only <code>sjbis prime</code> auto-starts a <em>local</em> daemon)</li>
       </ul>
     </div>
 
@@ -544,11 +568,11 @@
     </div>
 
     <div class="comp">
-      <h4>Queue + Store <span class="tag">SQLite</span></h4>
-      <p>Single-writer SQLite database with a WAL. Two tables, basically: <code>notifications</code> (in-flight + history) and <code>rules</code>. Auditable, scriptable, backupable. The daemon is stateless beyond this.</p>
+      <h4>Queue + Store <span class="tag">PostgreSQL</span></h4>
+      <p>A PostgreSQL database reached over <code>sqlx</code>. Tables for <code>notifications</code> (in-flight + history), <code>rules</code>, and <code>agents</code>. Auditable, scriptable, backupable. The daemon is stateless beyond this. <span style="color:var(--warm)">As-built: the design doc said SQLite + WAL; the shipping daemon uses Postgres (DSN in <code>~/.config/sjbis/database.toml</code>, pointing at a remote <code>yesod-postgres-server</code>).</span></p>
       <ul>
-        <li>Schema migrations live in the binary; auto-runs on start</li>
-        <li>Retention: history kept 30 days by default, configurable</li>
+        <li>Schema migrations live in the binary (<code>sqlx::migrate!</code>); auto-run on start</li>
+        <li>Migrations: initial schema, snooze, note, detail-markdown, rule priority</li>
       </ul>
     </div>
 
@@ -582,10 +606,10 @@
 
     <div class="comp" style="--accent: var(--violet)">
       <h4>LLM Provider <span class="tag">OpenAI-compatible</span></h4>
-      <p>The router talks to any OpenAI-compatible endpoint. Default: <strong>Fireworks</strong> (cheap, fast, hosts open-weight models like Llama 3.3 70B and Qwen). Anthropic and OpenAI work too. Local Ollama for fully-offline mode. Prompts are structured but not aggressively token-pinched; a router call is comfortably ~1–2k tokens.</p>
+      <p>The router talks to any OpenAI-compatible endpoint. Default: <strong>Fireworks</strong> (cheap, fast, hosts open-weight models). The shipping default model is <code>accounts/fireworks/models/kimi-k2p6</code>. Anthropic and OpenAI work too. Local Ollama for fully-offline mode. Prompts are structured but not aggressively token-pinched; a router call is comfortably ~1–2k tokens.</p>
       <ul>
-        <li>Token budget: ~1.5k tokens / router call · ~$0.0003 on Fireworks Llama 70B</li>
-        <li>Hard cap: 3 LLM calls per <code>ask</code> (router + renderer-guess + dedupe)</li>
+        <li>Enabled only when <code>FIREWORKS_API_KEY</code> is set; otherwise the daemon stays fully deterministic</li>
+        <li>Used for two things today: router classify/dedupe and natural-language rule compilation</li>
         <li>Falls back to deterministic behavior on provider outage</li>
       </ul>
     </div>
@@ -609,7 +633,7 @@
       <div class="body">
         <span class="actor">caller · code-agent</span>
         <h5>Caller emits the CLI command.</h5>
-        <p>Question, answer shape, urgency, deadline, reply channel. Marshalled into a single JSON payload over the local socket.</p>
+        <p>Question, answer shape, urgency, deadline, reply channel. Marshalled into a single JSON payload sent to the daemon's HTTP API.</p>
         <div class="code">sjbis ask --yesno -q "..." -u 4 -d 6m --blocking</div>
       </div>
     </div>
@@ -666,7 +690,7 @@
       <div class="body">
         <span class="actor">store · audit</span>
         <h5>Persist the answer trail.</h5>
-        <p>Latency, renderer, who answered, the question text, the answer text. Available via <code>sjbis history</code> and as the data behind the dashboard's "recent" rail.</p>
+        <p>Latency, renderer, who answered, the question text, the answer text. Available via the <code>/history</code> endpoint and as the data behind the dashboard's "recent" rail.</p>
       </div>
     </div>
   </div>
@@ -675,6 +699,19 @@
 <!-- ──────────────────────────────────────────────────────────────────── -->
 <section id="long-running">
   <h2><span class="num">05.5</span> Long-running agents vs ephemeral callers</h2>
+  <div class="qa" style="border-left-color: var(--warm); margin: 0 0 16px;">
+    <p class="q" style="color:var(--warm)">As-built (June 2026)</p>
+    <p class="a">
+      This section is mostly <strong>planned</strong>. Today every <code>sjbis
+      ask</code> is a one-shot HTTP call — there is no persistent gRPC channel,
+      no <code>sjbis subscribe</code> answer stream, no token issuance from
+      <code>register</code>, and no backpressure / throttling. The working
+      pattern that <em>is</em> implemented is the <code>prime</code> agreement:
+      ask with <code>--blocking --deadline</code>, and on timeout apply best
+      judgement and record it with <code>sjbis answer &lt;id&gt; --via
+      caller-timeout</code>.
+    </p>
+  </div>
   <p>
     SJBIS is called by two very different shapes of process, and the
     contract has to work cleanly for both.
@@ -783,7 +820,7 @@
   </p>
 
   <div class="prompt">
-    <div class="prompt-hd"><span>prompt · sjbis.router.classify</span><span class="model">fireworks · llama-v3p3-70b-instruct · ~1.5k tok</span></div>
+    <div class="prompt-hd"><span>prompt · sjbis.router.classify</span><span class="model">fireworks · kimi-k2p6 · ~1.5k tok</span></div>
 <div class="prompt-bd"><span class="sys">SYSTEM</span>
 You triage notifications headed for Stephen's information surfacer.
 Output JSON with fields:
@@ -825,7 +862,7 @@ open_notifications:
   </p>
 
   <div class="prompt">
-    <div class="prompt-hd"><span>prompt · sjbis.rules.compile</span><span class="model">fireworks · llama-v3p3-70b-instruct · ~2k tok</span></div>
+    <div class="prompt-hd"><span>prompt · sjbis.rules.compile</span><span class="model">fireworks · kimi-k2p6 · ~2k tok</span></div>
 <div class="prompt-bd"><span class="sys">SYSTEM</span>
 Convert one English rule into a JSON filter. Schema:
   {
@@ -974,12 +1011,29 @@ rule: "Only family and texts from my kids for the next 15 minutes."
 <section id="deployment">
   <h2><span class="num">09</span> Deployment topology</h2>
   <p>
-    The daemon doesn't live on your dev box. It runs in a small VM on a
-    Proxmox server on your home LAN, and every client — long-running
-    agents on the dev box, the dashboard on your phone or tablet, the
-    tray widget on the laptop — reaches it over <strong>Tailscale</strong>.
-    That setup is the default, not a deployment variant.
+    The daemon doesn't live on your dev box. It runs on an always-on host on
+    your home LAN, and clients — long-running agents and the CLI on the dev
+    box, the dashboard in a browser — reach it over the LAN by URL.
   </p>
+
+  <div class="qa" style="border-left-color: var(--warm); margin: 0 0 20px;">
+    <p class="q" style="color:var(--warm)">As-built (June 2026)</p>
+    <p class="a">
+      The diagram below shows the original Proxmox-VM-over-Tailscale design. In
+      practice the daemon runs on the host <code>dertog</code>
+      (<code>192.168.0.138:7878</code>) as a <strong>systemd user service</strong>,
+      reached over the plain LAN URL configured in
+      <code>~/.config/sjbis/daemon.toml</code> — <strong>no Tailscale, no
+      MagicDNS auto-discovery, and no device-identity / bearer-token auth yet</strong>.
+      State lives in <strong>PostgreSQL</strong> (a remote
+      <code>yesod-postgres-server</code>, set via the DSN in
+      <code>database.toml</code>), not a local SQLite file. Deploys copy the
+      static musl binary + assets with <code>scp</code> (rsync isn't installed on
+      the host) and restart the service; routine version bumps can also use
+      <code>sjbis upgrade</code>, which pulls prebuilt binaries from GitHub
+      Releases.
+    </p>
+  </div>
 
   <div class="diagram-wrap">
     <svg viewBox="0 0 1080 420" xmlns="http://www.w3.org/2000/svg">
@@ -995,7 +1049,7 @@ rule: "Only family and texts from my kids for the next 15 minutes."
       <!-- Tailnet boundary -->
       <rect x="20" y="50" width="940" height="280" rx="24"
             fill="rgba(91,212,255,0.04)" stroke="rgba(91,212,255,0.4)" stroke-dasharray="6 5"/>
-      <text x="40" y="80" fill="#5BD4FF" font-family="JetBrains Mono" font-size="11" letter-spacing="0.12em">TAILNET · private · authenticated by device identity</text>
+      <text x="40" y="80" fill="#5BD4FF" font-family="JetBrains Mono" font-size="11" letter-spacing="0.12em">HOME LAN · daemon reached by host URL  (as-built: no Tailscale / auth yet)</text>
 
       <!-- Dev box (left) -->
       <g>
@@ -1019,20 +1073,20 @@ rule: "Only family and texts from my kids for the next 15 minutes."
       <g>
         <rect x="380" y="110" width="320" height="200" rx="14"
               fill="rgba(199,243,61,0.06)" stroke="#C7F33D"/>
-        <text x="540" y="135" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#C7F33D" letter-spacing="0.1em">PROXMOX · sjbis VM · always-on</text>
+        <text x="540" y="135" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="#C7F33D" letter-spacing="0.1em">LAN HOST · dertog · always-on</text>
 
         <rect x="410" y="155" width="260" height="60" rx="10" fill="rgba(0,0,0,0.35)" stroke="rgba(199,243,61,0.45)"/>
         <text x="540" y="183" text-anchor="middle" font-family="Bricolage Grotesque" font-weight="600" font-size="18" fill="#f4f3ee">SJBIS daemon</text>
         <text x="540" y="201" text-anchor="middle" font-family="JetBrains Mono" font-size="10" fill="rgba(244,243,238,0.55)">ingress · router · rules · store · SSE</text>
 
         <rect x="410" y="225" width="125" height="60" rx="8" fill="rgba(0,0,0,0.25)" stroke="rgba(255,255,255,0.15)"/>
-        <text x="472" y="248" text-anchor="middle" font-family="Space Grotesk" font-size="12" fill="#f4f3ee">SQLite + WAL</text>
+        <text x="472" y="248" text-anchor="middle" font-family="Space Grotesk" font-size="12" fill="#f4f3ee">PostgreSQL</text>
         <text x="472" y="265" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="rgba(244,243,238,0.55)">notifications · rules</text>
         <text x="472" y="278" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="rgba(244,243,238,0.55)">history · audit</text>
 
         <rect x="545" y="225" width="125" height="60" rx="8" fill="rgba(184,157,255,0.06)" stroke="rgba(184,157,255,0.45)"/>
         <text x="607" y="248" text-anchor="middle" font-family="Space Grotesk" font-size="12" fill="#f4f3ee">Fireworks</text>
-        <text x="607" y="265" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="rgba(184,157,255,0.75)">llama-v3p3-70b</text>
+        <text x="607" y="265" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="rgba(184,157,255,0.75)">kimi-k2p6</text>
         <text x="607" y="278" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="rgba(184,157,255,0.75)">over public WAN</text>
       </g>
 
@@ -1093,23 +1147,21 @@ rule: "Only family and texts from my kids for the next 15 minutes."
 
   <ul class="lead">
     <li>
-      <strong>Transport.</strong> Default <code>--daemon</code> URL is the
-      daemon's MagicDNS name on your tailnet
-      (<code>https://sjbis.&lt;tailnet&gt;.ts.net</code>), not a Unix socket.
-      The CLI auto-discovers it via <code>tailscale status --json</code> on
-      first run and caches the result, so most callers never set
-      <code>--daemon</code> explicitly.
+      <strong>Transport.</strong> <span style="color:var(--warm)">As-built:</span> the
+      <code>--daemon</code> URL is a plain host URL on the LAN
+      (<code>http://192.168.0.138:7878</code>), resolved from the flag,
+      <code>SJBIS_DAEMON</code>, or <code>daemon.toml</code>. <em>Planned:</em> a
+      Tailscale MagicDNS name (<code>https://sjbis.&lt;tailnet&gt;.ts.net</code>)
+      with auto-discovery via <code>tailscale status --json</code> — not yet
+      implemented.
     </li>
     <li>
-      <strong>Auth-by-identity, not auth-by-token.</strong> Tailscale's daemon
-      tags every inbound request with the calling device's authenticated
-      identity (<code>Tailscale-User-Login</code>,
-      <code>Tailscale-Headers</code>). SJBIS trusts those headers from
-      tailnet IPs and skips bearer-token validation entirely for
-      <em>personal</em> devices. Bearer tokens still exist, but only for
-      <em>agents</em> (so an OpenClaw token can't impersonate Hermes) and
-      for <em>non-tailnet callers</em> (a GitHub webhook firing into the
-      daemon from the public internet).
+      <strong>Auth.</strong> <span style="color:var(--warm)">As-built: there is no
+      authentication.</span> The daemon trusts any client that can reach it on the
+      LAN; keep it off the public internet. <em>Planned:</em> Tailscale
+      device-identity for personal devices plus scoped bearer tokens for agents
+      and non-tailnet callers (the <code>sjbis register</code> / <code>token</code>
+      flow described below).
     </li>
     <li>
       <strong>Multi-device dashboard is free.</strong> Every client opens its
@@ -1119,39 +1171,51 @@ rule: "Only family and texts from my kids for the next 15 minutes."
       store is the source of truth, the clients are caches.
     </li>
     <li>
-      <strong>Latency budget.</strong> Proxmox over wired LAN to the dev box:
-      ~0.5 ms. Phone on cellular over Tailscale: 30–60 ms. Both well under
+      <strong>Latency budget.</strong> Daemon over wired LAN to the dev box:
+      sub-millisecond. A remote client over a VPN: tens of ms. Both well under
       the threshold where you'd notice. The <em>only</em> hot path that
       cares is the dashboard's optimistic answer animation — keep that
       local-first, then reconcile.
     </li>
     <li>
-      <strong>Failure modes.</strong> Tailnet unreachable from the dev box
-      (kernel update, VPN flap)? Long-running agents hold in-flight asks
-      in their own memory and retry with backoff. Daemon down? Clients
-      show a <code>"sjbis offline · last seen 4m ago"</code> banner; agents
-      keep buffering. Proxmox host dies? That's why the store is a single
-      SQLite file: rsync it elsewhere weekly and you have a recovery
-      path.
+      <strong>Failure modes.</strong> Daemon down? Clients
+      show a <code>"sjbis offline"</code> banner; agents
+      keep buffering. Host dies? Because state lives in PostgreSQL, recovery is a
+      database restore — back up the Postgres database and you have a recovery
+      path. <span style="color:var(--warm)">(As-built: state is Postgres, not a
+      single SQLite file to rsync.)</span>
     </li>
   </ul>
 
   <div class="qa">
     <p class="q">Why not run the daemon on the dev box?</p>
-    <p class="a"><strong>Two reasons.</strong> First, the dev box reboots and sleeps; the daemon needs to always be up so phones and the watch can answer asks while the laptop is closed. Second, the daemon hosts shared state — history, rules, identity — and putting it on a single workstation makes the multi-device story painful. Proxmox VM is cheap, always-on, and snapshots cleanly.</p>
+    <p class="a"><strong>Two reasons.</strong> First, the dev box reboots and sleeps; the daemon needs to always be up so other clients can answer asks while the laptop is closed. Second, the daemon hosts shared state — history, rules, identity — and putting it on a single workstation makes the multi-device story painful. <span style="color:var(--warm)">As-built: the always-on host is <code>dertog</code> running a systemd user service; the original doc assumed a Proxmox VM.</span></p>
   </div>
   <div class="qa">
     <p class="q">Why not Cloudflare / a hosted service?</p>
-    <p class="a"><strong>Privacy.</strong> The router prompts include the literal question text Stephen is being asked. Those go to Fireworks anyway, but the rest of the data (rules, identity, history, mute keys) never leaves the tailnet. A hosted SJBIS would require sending all of that to a third party. Self-hosted on Proxmox is the cleanest answer.</p>
+    <p class="a"><strong>Privacy.</strong> The router prompts include the literal question text Stephen is being asked. Those go to Fireworks anyway, but the rest of the data (rules, identity, history, mute keys) stays on the self-hosted daemon and its database. A hosted SJBIS would require sending all of that to a third party. Self-hosting on your own LAN host is the cleanest answer.</p>
   </div>
 </section>
 
 <!-- ──────────────────────────────────────────────────────────────────── -->
 <section id="security">
   <h2><span class="num">10</span> Trust, auth, and the privacy knob</h2>
+  <div class="qa" style="border-left-color: var(--warm); margin: 0 0 16px;">
+    <p class="q" style="color:var(--warm)">As-built (June 2026)</p>
+    <p class="a">
+      The three-layer auth model below (Tailnet identity, agent tokens,
+      non-tailnet tokens) is <strong>planned, not implemented</strong>. Today the
+      daemon performs <strong>no authentication</strong> and trusts any client that
+      can reach it on the LAN — so it must stay off the public internet.
+      <code>sjbis register</code> exists but only records an agent's
+      name/glyph/color; it does <em>not</em> issue a token, and there is no
+      <code>sjbis token</code> command. The <code>--privacy</code> knob is parsed,
+      but <code>redact-pii</code> masking isn't wired up yet.
+    </p>
+  </div>
   <p>
-    With the deployment story pinned to a Proxmox VM on your tailnet, the
-    trust model has three layers:
+    With the deployment story pinned to an always-on host on your LAN, the
+    intended trust model has three layers:
   </p>
   <ul class="lead">
     <li>
@@ -1199,6 +1263,13 @@ rule: "Only family and texts from my kids for the next 15 minutes."
   <p>
     The CLI is the contract; SDKs are thin wrappers. Three planned at launch:
   </p>
+  <div class="qa" style="border-left-color: var(--warm); margin: 8px 0 16px;">
+    <p class="q" style="color:var(--warm)">As-built (June 2026)</p>
+    <p class="a">None of these SDKs ship yet — only the <code>sjbis</code> CLI and the
+    HTTP/JSON API exist. The Python / TypeScript / MCP wrappers below are planned.
+    The shell example is real (modulo flag names: use <code>--agent-name</code>,
+    not <code>--src</code>).</p>
+  </div>
 
   <div class="two">
     <div class="callout">
@@ -1272,8 +1343,8 @@ booking.create(hotel.id);</pre>
 </section>
 
 <footer>
-  <span>sjbis · stephen j barr information surfacer · design doc v0.4</span>
-  <span>last updated may 2026</span>
+  <span>sjbis · stephen j barr information surfacer · design doc v0.4 (annotated as-built)</span>
+  <span>last updated june 2026</span>
 </footer>
 
 </main>

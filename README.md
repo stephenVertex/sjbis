@@ -2,28 +2,67 @@
 
 A human-in-the-loop notification dashboard. Agents (scripts, tools, AI systems) post questions via CLI or API. Humans answer them in a keyboard-centric web UI. Answers flow back to the caller synchronously or via webhooks.
 
-## Quick Start (Local)
+SJBIS is a **universal information plane any tool can call**: one daemon, one CLI,
+and a thin (optional) AI layer that turns arbitrary questions from arbitrary
+callers into the right interaction for a human — surfaced, ranked, deduped, and
+routed by rules you write in plain English.
+
+> A fuller design narrative lives in [`SJBIS Architecture.html`](SJBIS%20Architecture.html).
+> That document is the original v0.4 design vision annotated against what is
+> actually built; this README describes the **as-built** system.
+
+## The anatomy of a call
+
+Any process emits a single `sjbis ask` command. The daemon receives it over HTTP,
+optionally asks an LLM to fill in the gaps (urgency, the right renderer, dedupe),
+pushes it to the dashboard, and waits. A typed answer comes back on the caller's
+chosen channel — stdout, exit code, webhook, or a file — or a timeout, or a
+"muted" signal if a rule dropped it.
+
+Three things define every call:
+
+- **The question** — required free text. The human (and optionally the AI router) reads it.
+- **The answer shape** — one of `--yesno`, `--choices`, `--text`, `--number`, `--file`, `--diff`, `--ack`, `--pick`, `--schedule`. This picks the dashboard renderer. Skip it and pass `--guess-renderer` to let the AI choose.
+- **The agent name** — `--agent-name "OpenCode"`, required. Stable across runs of the same caller; drives the card's source line, its glyph/color identity, and rule-matching. Optional `--instance` appends per-session detail (e.g. `"Session s7b3d11"`).
+
+Plus a **reply channel** (`--reply-to`, default `stdout` when `--blocking`) and an
+optional **deadline** (`--deadline 6m`). See [Working agreement for
+agents](#working-agreement-for-agents) for the blocking + timeout pattern.
+
+## Topology
+
+This setup runs **one daemon on a remote host** (`dertog`, `192.168.0.138:7878`)
+which owns PostgreSQL, the dashboard, SSE, and the HTTP API. Your Mac runs the
+**CLI as a client only**, pointed at the remote daemon — it does **not** run a
+local daemon or a local database.
+
+- **Daemon host:** `dertog` (`192.168.0.138`), port `7878`, systemd user service.
+- **Client:** `sjbis` CLI on your Mac, configured to talk to the remote daemon.
+- **Database:** remote `yesod-postgres-server` (configured on the daemon host).
+
+## Quick Start (Client)
 
 ```bash
-# 1. Build
-cargo build --release
+# 1. Build / install the CLI locally
+cargo install --path .
 
-# 2. Configure PostgreSQL
-cat > ~/.config/sjbis/database.toml << 'EOF'
-[database]
-dsn = "postgresql://user:pass@localhost:5432/sjbis"
+# 2. Point the client at the remote daemon
+mkdir -p ~/.config/sjbis
+cat > ~/.config/sjbis/daemon.toml << 'EOF'
+url = "http://192.168.0.138:7878"
 EOF
 
-# 3. Start daemon
-./target/release/sjbis daemon start --port 7878
+# 3. Open the dashboard (served by the remote daemon)
+open http://192.168.0.138:7878
 
-# 4. Open dashboard
-open http://localhost:7878
-
-# 5. Post a question from any agent
-./target/release/sjbis ask --question "Deploy to prod?" --yesno \
+# 4. Post a question from any agent (goes to the remote daemon)
+sjbis ask --question "Deploy to prod?" --yesno \
   --agent-name deploybot --blocking
 ```
+
+> The daemon itself (build, deploy, database, systemd) runs on `dertog` — see
+> [Server Deployment](#server-deployment) below. You only need that section when
+> updating the daemon host, not for day-to-day client use.
 
 ## Server Deployment
 
@@ -54,13 +93,13 @@ mkdir -p ~/sjbis ~/.config/sjbis
 # Copy binary
 scp target/x86_64-unknown-linux-musl/release/sjbis dertog:~/sjbis/
 
-# Copy static files (dashboard UI)
-rsync -av static/ dertog:~/sjbis/static/
+# Copy static files (dashboard UI) — rsync is not installed on dertog, use scp
+scp static/*.jsx static/*.css static/*.html dertog:~/sjbis/static/
 
-# Configure database
+# Configure database (on the daemon host)
 cat > ~/.config/sjbis/database.toml << 'EOF'
 [database]
-dsn = "postgresql://user:pass@host:5432/sjbis"
+dsn = "postgresql://user:pass@yesod-postgres-server:5432/sjbis"
 EOF
 ```
 
@@ -104,9 +143,18 @@ The service auto-starts on user login and auto-restarts on crash.
 ### 4. Verify
 
 ```bash
+# On the daemon host
 curl http://localhost:7878/health   # → "ok"
 curl http://localhost:7878/list       # → [] (empty initially)
+
+# From your Mac (client), hit the remote daemon
+curl http://192.168.0.138:7878/health   # → "ok"
 ```
+
+> In practice, build + deploy + restart + status checks are automated by
+> [`build-and-deploy.sh`](build-and-deploy.sh), which scp's the binary and
+> static assets to `dertog` and restarts the service. The manual steps above
+> document what that script does under the hood.
 
 ## Architecture
 
@@ -123,14 +171,120 @@ curl http://localhost:7878/list       # → [] (empty initially)
                     └─────────────┘
 ```
 
+One process boundary: the **daemon**. It exposes an HTTP/JSON API (built on
+`axum`), persists everything to PostgreSQL, and pushes live updates to the
+dashboard over Server-Sent Events. The LLM is optional and used in narrow,
+replaceable roles.
+
+### Components
+
+| Component | Role |
+|---|---|
+| **Ingress** | The HTTP/JSON API the CLI calls (`/ask`, `/answer/{id}`, `/list`, …). Validates the answer shape, applies `--id` idempotency, writes to the store. No LLM here — speed matters. |
+| **AI Router** *(optional)* | Reads the question + caller, and fills gaps: suggests a renderer (when missing or `--guess-renderer`), predicts urgency to break ties, and flags likely duplicates. Bypassed entirely when `--privacy private` or when no API key is set. |
+| **Rule Engine** | Each rule is a plain-English line plus a compiled JSON filter. Compilation is a one-time LLM call (or a fast offline pattern matcher); matching is deterministic. Rules can mute, snooze, re-prioritize, or auto-answer. Evaluated in priority order; time-bounded rules auto-expire. |
+| **Queue + Store** | PostgreSQL over `sqlx`. Tables: `notifications` (in-flight + history), `rules`, `agents`. Migrations live in the binary and auto-run on start. The daemon is stateless beyond this. |
+| **Identity** | Maps `--agent-name` to a stable glyph + color via deterministic hashing (no LLM). `--instance` is shown on the card but does not affect identity or rules. |
+| **Response Router** | When the human answers, formats and delivers the result per `--reply-to`: stdout, webhook (with retry), file (atomic write), or exit code. Records the full answer trail (renderer, latency, via). |
+| **Dashboard** | The browser app served from `static/`. Subscribes over SSE for live updates and POSTs answers back. Renders the renderer the caller (or router) chose. |
+| **LLM Provider** *(optional)* | Any OpenAI-compatible endpoint. Default: Fireworks, model `accounts/fireworks/models/kimi-k2p6`. Enabled only when `FIREWORKS_API_KEY` is set; the daemon stays fully deterministic without it. |
+
+### Lifecycle of one ask
+
+A blocking yes/no, end to end:
+
+1. **Caller** emits `sjbis ask … --blocking --deadline 6m`; the CLI POSTs JSON to the daemon.
+2. **Ingress** validates the shape, checks `--id` for idempotency, creates a `notifications` row.
+3. **AI Router** *(if enabled)* makes one short LLM call to classify, predict urgency, and detect duplicates.
+4. **Rule Engine** applies your rules in priority order — pass through, re-prioritize, mute, snooze, or auto-answer.
+5. **Dashboard** receives an SSE event; the card appears (urgency drives how loudly).
+6. **Human** answers (click, type, drag, or keyboard shortcut).
+7. **Response Router** delivers the answer back over the caller's channel.
+8. **Store** persists the full answer trail (available via `/history` and the dashboard's recent rail).
+
+Steady state, an ask makes **at most one** LLM call (often zero — the router is
+optional and cache-friendly).
+
+### The AI layer (scoped tight)
+
+The AI is deliberately small and explainable. It runs in two narrow roles today:
+
+- **Routing & ranking** — one prompt per ask: suggest a renderer, predict urgency, flag dedupe candidates. The caller's explicit flags win; the model never rewrites your question. On provider outage it falls back to the caller's claims.
+- **Rule compilation** — one prompt when you *write* a rule, turning English into a JSON filter that the daemon then evaluates deterministically.
+
+Both are gated on `FIREWORKS_API_KEY`; with no key, SJBIS is a fully
+deterministic notification surfacer.
+
+> **Not yet built (planned in the design doc):** authentication / bearer tokens,
+> Tailscale transport + device identity, agent token issuance from `sjbis
+> register`, persistent gRPC streams, language SDKs, and `redact-pii` masking.
+> Today the daemon trusts any client that can reach it on the LAN — **keep it off
+> the public internet.**
+
 **Key design decisions:**
 - **Blocking ask is opt-in** (`--blocking`). Default is fire-and-forget so automated workflows never hang.
 - **Human input never blocks by default** — agents must explicitly request synchronous answers.
 - **Keyboard-centric** — J/K navigate, Enter open, 1–9 answer, S snooze, D dismiss, T tweaks.
 - **Universal snooze** with deadline cap (cannot snooze past auto-approve deadline).
 - **Optional human note** attached to every answer, returned to the caller.
+- **AI is optional and bounded** — at most one LLM call per ask, and the caller's explicit input always wins.
+
+## CLI Commands
+
+The `sjbis` binary is both the client (talks to the daemon) and the daemon itself.
+
+| Command | What it does |
+|---|---|
+| `sjbis ask …` | Post a question. Returns an id immediately; blocks for an answer with `--blocking`. |
+| `sjbis answer <id> --answer <v>` | Record an answer on behalf of the caller (e.g. an agent's auto-pick after a timeout). Supports `--via` and `--note`. |
+| `sjbis wait <id>` | Reattach to a posted question and block until it resolves. |
+| `sjbis status <id>` | Print a notification's state (open / answered / cancelled / timed_out / dismissed). |
+| `sjbis list [--json]` | List open notifications. |
+| `sjbis cancel <id>` | Withdraw an unanswered question. |
+| `sjbis dismiss <id>` | Mark as seen without answering; no reply sent. |
+| `sjbis rule add\|allow\|list\|rm` | Manage filtering rules (see [API](#post-rules--create-filtering-rules)). |
+| `sjbis entity add\|list\|show\|rm` | Manage named contact groups used in rules. |
+| `sjbis register --agent-name <n>` | Register an agent identity (name + optional glyph/color). |
+| `sjbis prime` | Print the agent primer (working agreement, question types, daemon status). |
+| `sjbis upgrade` | Self-update from GitHub Releases (see [Upgrading](#upgrading)). |
+| `sjbis daemon start\|stop\|status` | Daemon lifecycle. `start --port 7878 [--background]`. |
+
+Run `sjbis prime` first when wiring up a new agent — it prints the live daemon
+status and the exact pattern to follow.
+
+## Working agreement for agents
+
+When an agent (script or AI) needs a human decision, the intended pattern is a
+**blocking ask with a deadline**, then **proceed on timeout**:
+
+```bash
+# 1. Ask, blocking, with a deadline. --json gives a structured result.
+res=$(sjbis ask --question "Approve PR #412?" --yesno \
+        --agent-name codebot --deadline 1m --blocking --json)
+
+# 2. via == "timed_out" means the deadline passed with no human answer.
+via=$(echo "$res" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("via",""))')
+
+# 3. If it timed out, DON'T hang — apply best judgement, then INFORM the
+#    server so the dashboard shows the auto-pick:
+if [ "$via" = "timed_out" ]; then
+  id=$(echo "$res" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+  sjbis answer "$id" --answer "no" --via caller-timeout \
+    --note "No reply in time — held off because the PR touches auth."
+fi
+```
+
+The daemon caps a blocking wait at the deadline and returns promptly, so agents
+never build their own poll loops. Silence means "use your judgement," not a hang.
+Always check the `note` field on a real answer — humans can attach follow-up
+context there.
 
 ## API for Agents
+
+> The examples below use `http://localhost:7878` for brevity. From a **client**
+> (e.g. your Mac), substitute the remote daemon URL `http://192.168.0.138:7878`,
+> or set `SJBIS_DAEMON` / `~/.config/sjbis/daemon.toml` so the `sjbis` CLI uses
+> it automatically.
 
 ### POST /ask — create a notification
 
@@ -184,11 +338,20 @@ This creates a mute-all + surface-exceptions ruleset automatically.
 
 ## Configuration Files
 
-### `~/.config/sjbis/database.toml`
+### `~/.config/sjbis/daemon.toml` (client)
+
+Points the `sjbis` CLI at the daemon. In this setup the client targets the
+remote daemon on `dertog`:
+
+```toml
+url = "http://192.168.0.138:7878"
+```
+
+### `~/.config/sjbis/database.toml` (daemon host)
 
 ```toml
 [database]
-dsn = "postgresql://user:pass@host:5432/sjbis"
+dsn = "postgresql://user:pass@yesod-postgres-server:5432/sjbis"
 ```
 
 ### `~/.config/sjbis/entities.toml`
@@ -249,11 +412,55 @@ Migrations live in `migrations/` and auto-run on daemon startup via `sqlx::migra
 - `004_add_detail_markdown.sql` — `detail_markdown` for rich text
 - `005_add_rule_priority.sql` — `priority` for rule evaluation order
 
+## Upgrading
+
+`sjbis` can update itself in place from GitHub Releases — no need to rebuild or
+re-run the deploy script for a routine version bump.
+
+```bash
+sjbis upgrade --check          # see if a newer release exists (no download)
+sjbis upgrade                  # download the latest release and replace this binary
+sjbis upgrade --tag v0.1.2     # install a specific tagged release
+sjbis upgrade --force          # reinstall even if already on the latest version
+```
+
+How it works:
+
+- Queries the GitHub Releases API for `stephenVertex/sjbis`, compares the running
+  `CARGO_PKG_VERSION` against the latest tag (build metadata after `+` is ignored).
+- Downloads the asset matching this platform's Rust target triple
+  (`sjbis-<triple>.tar.gz`), extracts the `sjbis` binary, and atomically swaps it
+  in via [`self-replace`](https://crates.io/crates/self-replace).
+- `--check` works on any platform; a real install requires a published asset for
+  your platform. Supported targets: **macOS Apple Silicon**
+  (`aarch64-apple-darwin`) and **Linux x86_64** (`x86_64-unknown-linux-musl`).
+  Other platforms get a clear "no prebuilt release" message.
+
+After upgrading the daemon host, restart the service so the new binary takes
+effect:
+
+```bash
+systemctl --user restart sjbis
+```
+
+### Release builds (CI)
+
+Release assets are produced by `.github/workflows/release.yml`, triggered on a
+`v*` tag push (or manual `workflow_dispatch`). It builds the macOS Apple Silicon
+and Linux musl binaries on self-hosted runners (with GitHub-hosted fallback),
+tarballs them with a `.sha256`, and attaches them to the GitHub Release that
+`sjbis upgrade` reads from.
+
+```bash
+# Cut a release
+git tag v0.1.2 && git push origin v0.1.2
+```
+
 ## Environment Variables
 
 | Variable | Purpose |
 |---|---|
-| `SJBIS_DAEMON` | Override daemon URL (default: `http://localhost:7878`) |
+| `SJBIS_DAEMON` | Override daemon URL the CLI talks to. Defaults to `http://localhost:7878`; in this setup the client targets the remote daemon `http://192.168.0.138:7878` (set here or in `~/.config/sjbis/daemon.toml`). |
 | `FIREWORKS_API_KEY` | Enable AI-powered rule compilation and renderer guessing |
 
 ## Troubleshooting
