@@ -7,6 +7,7 @@ mod models;
 mod router;
 mod rules;
 mod sse;
+mod upgrade;
 mod version;
 
 use anyhow::{Context, Result};
@@ -91,6 +92,7 @@ async fn main() -> Result<()> {
         cli::Commands::Daemon { command } => cmd_daemon(command).await,
         cli::Commands::Prime => cmd_prime().await,
         cli::Commands::Register { agent_name, glyph, color } => cmd_register(agent_name, glyph, color).await,
+        cli::Commands::Upgrade { check, force, tag } => cmd_upgrade(check, force, tag).await,
     }
 }
 
@@ -807,6 +809,11 @@ LIST / STATUS / CANCEL / DISMISS
   sjbis status sjbis-AbCdEfGh   Check state of any notification (open/answered/cancelled/timed_out/dismissed)
   sjbis cancel sjbis-AbCdEfGh   Cancel an open notification
   sjbis dismiss sjbis-AbCdEfGh  Dismiss (mark as seen without answering — no reply sent)
+
+UPGRADE
+  sjbis upgrade --check         See whether a newer release is available on GitHub
+  sjbis upgrade                 Download the latest release and replace this binary
+  sjbis upgrade --tag v0.1.2    Install a specific tagged release
 "#;
     println!("SJBIS — How to ask questions  (cli {})\n\n{}\n\n{}", version::full(), status_banner, help_body);
     Ok(())
@@ -828,4 +835,8 @@ async fn cmd_register(agent_name: String, glyph: Option<String>, color: Option<S
         anyhow::bail!("daemon error: {}", resp.text().await.unwrap_or_default());
     }
     Ok(())
+}
+
+async fn cmd_upgrade(check: bool, force: bool, tag: Option<String>) -> Result<()> {
+    upgrade::run(check, force, tag).await
 }

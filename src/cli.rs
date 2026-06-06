@@ -82,6 +82,18 @@ pub enum Commands {
         #[arg(long)]
         color: Option<String>,
     },
+    /// Upgrade sjbis to the latest release from GitHub
+    Upgrade {
+        /// Only check whether a newer version exists; do not download
+        #[arg(long)]
+        check: bool,
+        /// Reinstall even if already on the latest version
+        #[arg(long)]
+        force: bool,
+        /// Upgrade to a specific tag (e.g. v0.1.2) instead of the latest
+        #[arg(long)]
+        tag: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
