@@ -21,3 +21,14 @@ Thumbs.db
 
 # Daemon pid/logs
 /tmp/sjbis-*.log
+
+# Secrets / local config (never commit real credentials)
+.env
+.env.*
+*.pem
+*.key
+database.toml
+daemon.toml
+entities.toml
+**/database.toml
+**/daemon.toml
