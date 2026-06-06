@@ -31,11 +31,12 @@ struct Asset {
 fn target_triple() -> Result<&'static str> {
     // Only the targets the release workflow actually builds are supported.
     match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
         ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
         ("linux", "x86_64") => Ok("x86_64-unknown-linux-musl"),
         (os, arch) => Err(anyhow!(
             "no prebuilt release for this platform ({os}/{arch}); \
-             builds are published for macOS Intel and Linux Intel only"
+             builds are published for macOS (Apple Silicon + Intel) and Linux Intel"
         )),
     }
 }
