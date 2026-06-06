@@ -14,9 +14,14 @@ name: release
 #   sjbis-x86_64-apple-darwin.tar.gz        (macOS Intel)
 #   sjbis-x86_64-unknown-linux-musl.tar.gz  (Linux Intel)
 #
-# The Apple Silicon build prefers the self-hosted runner `sjbmbp` (a spare
-# M1 Mac) to offload compute, and automatically falls back to a
-# GitHub-hosted arm64 macOS runner when `sjbmbp` is offline.
+# Compute is offloaded to self-hosted runners when available:
+#   - aarch64-apple-darwin  → self-hosted `sjbmbp` (spare M1), else macos-14
+#   - x86_64-unknown-linux-musl → self-hosted `homestar-runner-sjbis`, else ubuntu-latest
+# The x86_64 macOS build always runs on a GitHub-hosted Intel runner.
+#
+# Self-hosted routing requires a RUNNER_STATUS_TOKEN secret (a PAT with
+# Administration: read on this repo) so the pick job can query runner status;
+# without it everything transparently falls back to GitHub-hosted runners.
 
 on:
   push:
@@ -29,60 +34,64 @@ permissions:
   contents: write
 
 jobs:
-  # Decide whether the self-hosted Apple Silicon runner is available; if not,
-  # fall back to a GitHub-hosted arm64 macOS runner so releases never block on
-  # the spare laptop being powered on.
-  pick-macos-runner:
+  # Probe the self-hosted runners and decide where each native build should
+  # run. Any failure (missing token, API error, offline runner) falls back to
+  # the matching GitHub-hosted runner so releases never block.
+  pick-runners:
     runs-on: ubuntu-latest
-    permissions:
-      # Listing self-hosted runners requires the administration scope; the
-      # default token only gets the scopes we declare here.
-      administration: read
-      contents: read
     outputs:
-      runs_on: ${{ steps.pick.outputs.runs_on }}
+      macos_arm64: ${{ steps.pick.outputs.macos_arm64 }}
+      linux_musl: ${{ steps.pick.outputs.linux_musl }}
     steps:
       - name: Detect self-hosted runner availability
         id: pick
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RUNNER_STATUS_TOKEN }}
         run: |
           set -uo pipefail
-          # Query the runner list. Capture body + HTTP status separately so a
-          # permission/API error is distinguishable from "runner offline".
-          http=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners" \
-            --jq '[.runners[] | select(.name=="sjbmbp" and .status=="online" and .busy==false)] | length' \
-            > /tmp/online 2>/tmp/err; echo $?)
-          online=$(cat /tmp/online 2>/dev/null || echo "")
 
-          if [ "$http" -ne 0 ] || [ -z "$online" ]; then
-            echo "::warning::Could not query runner status (gh exit=$http): $(cat /tmp/err 2>/dev/null)"
-            echo 'runs_on="macos-14"' >> "$GITHUB_OUTPUT"
-            echo "::notice::Defaulting to GitHub-hosted macos-14 (runner probe failed)."
-          elif [ "$online" -ge 1 ]; then
-            echo 'runs_on=["self-hosted","sjbmbp"]' >> "$GITHUB_OUTPUT"
-            echo "::notice::Using self-hosted runner sjbmbp for the Apple Silicon build."
-          else
-            echo 'runs_on="macos-14"' >> "$GITHUB_OUTPUT"
-            echo "::notice::sjbmbp offline/busy; falling back to GitHub-hosted macos-14."
-          fi
+          # Echoes the self-hosted runs-on JSON if the named runner is online
+          # and idle, otherwise the provided GitHub-hosted fallback (as a JSON
+          # string). Falls back on any error so the release can't be blocked.
+          choose() {
+            local name="$1" self_json="$2" fallback="$3"
+            if [ -z "${GH_TOKEN:-}" ]; then
+              echo "$fallback"; return
+            fi
+            local n
+            n=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners" \
+              --jq "[.runners[] | select(.name==\"$name\" and .status==\"online\" and .busy==false)] | length" \
+              2>/tmp/err)
+            if [ -z "${n:-}" ]; then
+              echo "::warning::runner probe for $name failed: $(cat /tmp/err 2>/dev/null)" 1>&2
+              echo "$fallback"
+            elif [ "$n" -ge 1 ]; then
+              echo "$self_json"
+            else
+              echo "$fallback"
+            fi
+          }
+
+          macos=$(choose "sjbmbp" '["self-hosted","sjbmbp"]' '"macos-14"')
+          linux=$(choose "homestar-runner-sjbis" '["self-hosted","homestar-runner"]' '"ubuntu-latest"')
+
+          echo "macos_arm64=$macos" >> "$GITHUB_OUTPUT"
+          echo "linux_musl=$linux" >> "$GITHUB_OUTPUT"
+          echo "::notice::aarch64-apple-darwin → $macos ; x86_64-unknown-linux-musl → $linux"
 
   build-macos-arm64:
     name: build aarch64-apple-darwin
-    needs: pick-macos-runner
-    runs-on: ${{ fromJSON(needs.pick-macos-runner.outputs.runs_on) }}
+    needs: pick-runners
+    runs-on: ${{ fromJSON(needs.pick-runners.outputs.macos_arm64) }}
     env:
       TARGET: aarch64-apple-darwin
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Ensure Rust toolchain + target
         run: |
           set -euo pipefail
-          # Self-hosted Mac already has rustup/cargo on PATH via the login
-          # shell; make sure cargo env is sourced and the target is present.
           if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -90,10 +99,8 @@ jobs:
           fi
           rustup target add "$TARGET"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
       - name: Build release binary
         run: cargo build --release --locked --target "$TARGET"
-
       - name: Package tarball
         id: package
         run: |
@@ -105,7 +112,6 @@ jobs:
           tar -czf "$tarball" -C "$stage" sjbis static
           shasum -a 256 "$tarball" > "$tarball.sha256"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
-
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -113,7 +119,6 @@ jobs:
           path: |
             ${{ steps.package.outputs.tarball }}
             ${{ steps.package.outputs.tarball }}.sha256
-
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -123,33 +128,72 @@ jobs:
             ${{ steps.package.outputs.tarball }}.sha256
           generate_release_notes: true
 
-  build-others:
-    name: build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-13          # Intel macOS runner (GitHub-hosted)
-            target: x86_64-apple-darwin
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+  build-linux-musl:
+    name: build x86_64-unknown-linux-musl
+    needs: pick-runners
+    runs-on: ${{ fromJSON(needs.pick-runners.outputs.linux_musl) }}
+    env:
+      TARGET: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Ensure Rust toolchain + musl
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          rustup target add "$TARGET"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # musl-gcc: present on the self-hosted box; install on hosted ubuntu.
+          if ! command -v musl-gcc >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y musl-tools
+          fi
+      - name: Build release binary
+        run: cargo build --release --locked --target "$TARGET"
+      - name: Package tarball
+        id: package
+        run: |
+          set -euo pipefail
+          stage="$(mktemp -d)"
+          cp "target/$TARGET/release/sjbis" "$stage/sjbis"
+          cp -R static "$stage/static"
+          tarball="sjbis-$TARGET.tar.gz"
+          tar -czf "$tarball" -C "$stage" sjbis static
+          shasum -a 256 "$tarball" > "$tarball.sha256"
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sjbis-x86_64-unknown-linux-musl
+          path: |
+            ${{ steps.package.outputs.tarball }}
+            ${{ steps.package.outputs.tarball }}.sha256
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.tarball }}
+            ${{ steps.package.outputs.tarball }}.sha256
+          generate_release_notes: true
 
+  build-macos-x64:
+    name: build x86_64-apple-darwin
+    runs-on: macos-13
+    env:
+      TARGET: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Install musl tools (linux)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
+          targets: x86_64-apple-darwin
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -157,32 +201,27 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('Cargo.lock') }}
-
+          key: macos-x64-cargo-${{ hashFiles('Cargo.lock') }}
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
+        run: cargo build --release --locked --target "$TARGET"
       - name: Package tarball
         id: package
-        shell: bash
         run: |
           set -euo pipefail
           stage="$(mktemp -d)"
-          cp "target/${{ matrix.target }}/release/sjbis" "$stage/sjbis"
+          cp "target/$TARGET/release/sjbis" "$stage/sjbis"
           cp -R static "$stage/static"
-          tarball="sjbis-${{ matrix.target }}.tar.gz"
+          tarball="sjbis-$TARGET.tar.gz"
           tar -czf "$tarball" -C "$stage" sjbis static
           shasum -a 256 "$tarball" > "$tarball.sha256"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
-
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sjbis-${{ matrix.target }}
+          name: sjbis-x86_64-apple-darwin
           path: |
             ${{ steps.package.outputs.tarball }}
             ${{ steps.package.outputs.tarball }}.sha256
-
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
