@@ -34,6 +34,11 @@ jobs:
   # the spare laptop being powered on.
   pick-macos-runner:
     runs-on: ubuntu-latest
+    permissions:
+      # Listing self-hosted runners requires the administration scope; the
+      # default token only gets the scopes we declare here.
+      administration: read
+      contents: read
     outputs:
       runs_on: ${{ steps.pick.outputs.runs_on }}
     steps:
@@ -42,11 +47,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          online=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners" \
+          set -uo pipefail
+          # Query the runner list. Capture body + HTTP status separately so a
+          # permission/API error is distinguishable from "runner offline".
+          http=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runners" \
             --jq '[.runners[] | select(.name=="sjbmbp" and .status=="online" and .busy==false)] | length' \
-            2>/dev/null || echo 0)
-          if [ "${online:-0}" -ge 1 ]; then
+            > /tmp/online 2>/tmp/err; echo $?)
+          online=$(cat /tmp/online 2>/dev/null || echo "")
+
+          if [ "$http" -ne 0 ] || [ -z "$online" ]; then
+            echo "::warning::Could not query runner status (gh exit=$http): $(cat /tmp/err 2>/dev/null)"
+            echo 'runs_on="macos-14"' >> "$GITHUB_OUTPUT"
+            echo "::notice::Defaulting to GitHub-hosted macos-14 (runner probe failed)."
+          elif [ "$online" -ge 1 ]; then
             echo 'runs_on=["self-hosted","sjbmbp"]' >> "$GITHUB_OUTPUT"
             echo "::notice::Using self-hosted runner sjbmbp for the Apple Silicon build."
           else
