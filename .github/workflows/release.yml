@@ -112,7 +112,12 @@ jobs:
           stage="$(mktemp -d)"
           cp "target/$TARGET/release/sjbis" "$stage/sjbis"
           cp -R static "$stage/static"
-          tarball="sjbis-$TARGET.tar.gz"
+          # Emit artifacts outside the repo so the checkout stays clean
+          # (clean: false keeps the working dir between runs, and a stray
+          # tarball in the repo root would make build.rs report -dirty).
+          out="$RUNNER_TEMP/sjbis-pkg"
+          mkdir -p "$out"
+          tarball="$out/sjbis-$TARGET.tar.gz"
           tar -czf "$tarball" -C "$stage" sjbis static
           shasum -a 256 "$tarball" > "$tarball.sha256"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
@@ -168,7 +173,12 @@ jobs:
           stage="$(mktemp -d)"
           cp "target/$TARGET/release/sjbis" "$stage/sjbis"
           cp -R static "$stage/static"
-          tarball="sjbis-$TARGET.tar.gz"
+          # Emit artifacts outside the repo so the checkout stays clean
+          # (clean: false keeps the working dir between runs, and a stray
+          # tarball in the repo root would make build.rs report -dirty).
+          out="$RUNNER_TEMP/sjbis-pkg"
+          mkdir -p "$out"
+          tarball="$out/sjbis-$TARGET.tar.gz"
           tar -czf "$tarball" -C "$stage" sjbis static
           shasum -a 256 "$tarball" > "$tarball.sha256"
           echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
