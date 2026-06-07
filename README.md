@@ -2,7 +2,7 @@
 
 A human-in-the-loop notification dashboard. Agents (scripts, tools, AI systems) post questions via CLI or API. Humans answer them in a keyboard-centric web UI. Answers flow back to the caller synchronously or via webhooks.
 
-![SJBIS in action](docs/images/sjbis-demo.gif)
+![SJBIS in action](https://post-genius-media.s3.amazonaws.com/shup/project/sjbis/sjbis-demo.gif)
 
 SJBIS is a **universal information plane any tool can call**: one daemon, one CLI,
 and a thin (optional) AI layer that turns arbitrary questions from arbitrary
@@ -21,7 +21,7 @@ judgement call, a quick "which of these?". The hard part isn't running the agent
 it's surfacing the *one question that needs you* without drowning you in noise,
 and routing your answer back to whatever process was waiting on it.
 
-![Agents are taking on substantial, long-horizon work](docs/images/highlight-anthropic-claude.png)
+![Agents are taking on substantial, long-horizon work](https://post-genius-media.s3.amazonaws.com/shup/project/sjbis/highlight-anthropic-claude.png)
 
 > Excerpt from Anthropic's [_Recursive self-improvement_](https://www.anthropic.com/institute/recursive-self-improvement).
 
