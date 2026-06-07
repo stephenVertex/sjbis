@@ -23,6 +23,8 @@ and routing your answer back to whatever process was waiting on it.
 
 ![Agents are taking on substantial, long-horizon work](docs/images/highlight-anthropic-claude.png)
 
+> Excerpt from Anthropic's [_Recursive self-improvement_](https://www.anthropic.com/institute/recursive-self-improvement).
+
 SJBIS is built for that gap: let agents work autonomously, but give them a clean,
 typed channel to ask a human when they should — and keep the human's attention
 scarce and well-routed.
