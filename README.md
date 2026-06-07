@@ -2,6 +2,8 @@
 
 A human-in-the-loop notification dashboard. Agents (scripts, tools, AI systems) post questions via CLI or API. Humans answer them in a keyboard-centric web UI. Answers flow back to the caller synchronously or via webhooks.
 
+![SJBIS in action](docs/images/sjbis-demo.gif)
+
 SJBIS is a **universal information plane any tool can call**: one daemon, one CLI,
 and a thin (optional) AI layer that turns arbitrary questions from arbitrary
 callers into the right interaction for a human — surfaced, ranked, deduped, and
@@ -10,6 +12,20 @@ routed by rules you write in plain English.
 > A fuller design narrative lives in [`SJBIS Architecture.html`](SJBIS%20Architecture.html).
 > That document is the original v0.4 design vision annotated against what is
 > actually built; this README describes the **as-built** system.
+
+## Motivation
+
+AI agents are increasingly doing real, autonomous work — but the highest-leverage
+work still needs a human in the loop at the right moments: an approval, a
+judgement call, a quick "which of these?". The hard part isn't running the agent;
+it's surfacing the *one question that needs you* without drowning you in noise,
+and routing your answer back to whatever process was waiting on it.
+
+![Agents are taking on substantial, long-horizon work](docs/images/highlight-anthropic-claude.png)
+
+SJBIS is built for that gap: let agents work autonomously, but give them a clean,
+typed channel to ask a human when they should — and keep the human's attention
+scarce and well-routed.
 
 ## The anatomy of a call
 
