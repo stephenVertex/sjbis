@@ -31,14 +31,25 @@ agents](#working-agreement-for-agents) for the blocking + timeout pattern.
 
 ## Topology
 
-This setup runs **one daemon on a remote host** (`dertog`, `192.168.0.138:7878`)
-which owns PostgreSQL, the dashboard, SSE, and the HTTP API. Your Mac runs the
-**CLI as a client only**, pointed at the remote daemon — it does **not** run a
-local daemon or a local database.
+SJBIS is a **client/server split**, even though it's one binary:
 
-- **Daemon host:** `dertog` (`192.168.0.138`), port `7878`, systemd user service.
-- **Client:** `sjbis` CLI on your Mac, configured to talk to the remote daemon.
-- **Database:** remote `yesod-postgres-server` (configured on the daemon host).
+- **Daemon** — runs on an always-on host and owns everything: PostgreSQL, the dashboard, SSE, and the HTTP API. Typically a systemd user service.
+- **Client** — the same `sjbis` binary run from your workstation (or any agent), pointed at the daemon's URL. It does not run a local daemon or database.
+
+The two talk over plain HTTP/JSON. Point the client at the daemon by setting a
+URL in `~/.config/sjbis/daemon.toml` (or the `SJBIS_DAEMON` env var); otherwise
+it defaults to `http://localhost:7878` — handy if you run the daemon locally.
+
+```toml
+# ~/.config/sjbis/daemon.toml  (on the client)
+url = "http://your-daemon-host:7878"
+```
+
+> **The author's reference deployment.** Stephen runs the daemon on a home-LAN
+> host (`dertog`, reachable at `http://192.168.0.138:7878`) as a systemd user
+> service, backed by a separate PostgreSQL server, and uses the `sjbis` CLI on a
+> Mac as a client. Concrete commands below use those names/addresses as worked
+> examples — substitute your own host and IP.
 
 ## Quick Start (Client)
 
@@ -46,23 +57,23 @@ local daemon or a local database.
 # 1. Build / install the CLI locally
 cargo install --path .
 
-# 2. Point the client at the remote daemon
+# 2. Point the client at your daemon (use your daemon host's URL)
 mkdir -p ~/.config/sjbis
 cat > ~/.config/sjbis/daemon.toml << 'EOF'
-url = "http://192.168.0.138:7878"
+url = "http://your-daemon-host:7878"
 EOF
 
-# 3. Open the dashboard (served by the remote daemon)
-open http://192.168.0.138:7878
+# 3. Open the dashboard (served by the daemon)
+open http://your-daemon-host:7878
 
-# 4. Post a question from any agent (goes to the remote daemon)
+# 4. Post a question from any agent (goes to the daemon)
 sjbis ask --question "Deploy to prod?" --yesno \
   --agent-name deploybot --blocking
 ```
 
-> The daemon itself (build, deploy, database, systemd) runs on `dertog` — see
-> [Server Deployment](#server-deployment) below. You only need that section when
-> updating the daemon host, not for day-to-day client use.
+> If you haven't stood up a daemon yet, see [Server Deployment](#server-deployment).
+> You only need that section to set up or update the daemon host, not for
+> day-to-day client use.
 
 ## Server Deployment
 
@@ -87,19 +98,22 @@ cargo zigbuild --target x86_64-unknown-linux-musl --release
 ### 2. Server Setup
 
 ```bash
-# On the server (e.g. dertog)
-mkdir -p ~/sjbis ~/.config/sjbis
+# Set your daemon host (the reference deployment uses `dertog`)
+HOST=your-daemon-host
+
+# On the server
+ssh "$HOST" 'mkdir -p ~/sjbis ~/.config/sjbis'
 
 # Copy binary
-scp target/x86_64-unknown-linux-musl/release/sjbis dertog:~/sjbis/
+scp target/x86_64-unknown-linux-musl/release/sjbis "$HOST":~/sjbis/
 
-# Copy static files (dashboard UI) — rsync is not installed on dertog, use scp
-scp static/*.jsx static/*.css static/*.html dertog:~/sjbis/static/
+# Copy static files (dashboard UI). scp avoids needing rsync on the host.
+scp static/*.jsx static/*.css static/*.html "$HOST":~/sjbis/static/
 
-# Configure database (on the daemon host)
-cat > ~/.config/sjbis/database.toml << 'EOF'
+# Configure the database on the daemon host (point dsn at your Postgres)
+ssh "$HOST" 'cat > ~/.config/sjbis/database.toml' << 'EOF'
 [database]
-dsn = "postgresql://user:pass@yesod-postgres-server:5432/sjbis"
+dsn = "postgresql://user:pass@your-postgres-host:5432/sjbis"
 EOF
 ```
 
@@ -147,14 +161,16 @@ The service auto-starts on user login and auto-restarts on crash.
 curl http://localhost:7878/health   # → "ok"
 curl http://localhost:7878/list       # → [] (empty initially)
 
-# From your Mac (client), hit the remote daemon
-curl http://192.168.0.138:7878/health   # → "ok"
+# From a client, hit the daemon by its URL
+curl http://your-daemon-host:7878/health   # → "ok"
 ```
 
 > In practice, build + deploy + restart + status checks are automated by
 > [`build-and-deploy.sh`](build-and-deploy.sh), which scp's the binary and
-> static assets to `dertog` and restarts the service. The manual steps above
-> document what that script does under the hood.
+> static assets to the daemon host and restarts the service. The manual steps
+> above document what that script does under the hood. The host and URL are
+> configurable via `SJBIS_REMOTE_HOST` / `SJBIS_REMOTE_URL` env vars (defaults
+> target the reference `dertog` deployment).
 
 ## Architecture
 
@@ -281,10 +297,10 @@ context there.
 
 ## API for Agents
 
-> The examples below use `http://localhost:7878` for brevity. From a **client**
-> (e.g. your Mac), substitute the remote daemon URL `http://192.168.0.138:7878`,
-> or set `SJBIS_DAEMON` / `~/.config/sjbis/daemon.toml` so the `sjbis` CLI uses
-> it automatically.
+> The examples below use `http://localhost:7878` for brevity. From a **client**,
+> substitute your daemon's URL (the reference deployment uses
+> `http://192.168.0.138:7878`), or set `SJBIS_DAEMON` /
+> `~/.config/sjbis/daemon.toml` so the `sjbis` CLI uses it automatically.
 
 ### POST /ask — create a notification
 
@@ -340,18 +356,17 @@ This creates a mute-all + surface-exceptions ruleset automatically.
 
 ### `~/.config/sjbis/daemon.toml` (client)
 
-Points the `sjbis` CLI at the daemon. In this setup the client targets the
-remote daemon on `dertog`:
+Points the `sjbis` CLI at the daemon. Set this to your daemon host's URL:
 
 ```toml
-url = "http://192.168.0.138:7878"
+url = "http://your-daemon-host:7878"
 ```
 
 ### `~/.config/sjbis/database.toml` (daemon host)
 
 ```toml
 [database]
-dsn = "postgresql://user:pass@yesod-postgres-server:5432/sjbis"
+dsn = "postgresql://user:pass@your-postgres-host:5432/sjbis"
 ```
 
 ### `~/.config/sjbis/entities.toml`
@@ -360,7 +375,7 @@ Named contact lists that expand in rules:
 
 ```toml
 [groups]
-family = ["Jeff", "Carmen", "Mom", "Dad"]
+family = ["Alice", "Bob", "Mom", "Dad"]
 work   = ["boss@company.com", "team-lead"]
 ```
 
@@ -420,7 +435,7 @@ re-run the deploy script for a routine version bump.
 ```bash
 sjbis upgrade --check          # see if a newer release exists (no download)
 sjbis upgrade                  # download the latest release and replace this binary
-sjbis upgrade --tag v0.1.2     # install a specific tagged release
+sjbis upgrade --tag v0.1.3     # install a specific tagged release
 sjbis upgrade --force          # reinstall even if already on the latest version
 ```
 
@@ -447,15 +462,17 @@ Or use the helper script, which runs `sjbis upgrade` on the daemon host,
 refreshes the dashboard assets, restarts the service, and runs health checks:
 
 ```bash
-./update-dertog.sh            # update dertog to the latest release
+./update-dertog.sh            # update the daemon host to the latest release
 ./update-dertog.sh v0.1.3     # update to a specific tag
 ```
 
 `update-dertog.sh` is the release-driven counterpart to `build-and-deploy.sh`:
 use `update-dertog.sh` to pull a published release, and `build-and-deploy.sh`
 when you want to push your local working tree straight to the host without
-cutting a release. The remote must already have a `sjbis` new enough to have
-the `upgrade` subcommand (≥ 0.1.2); for a first install on an older box, run
+cutting a release. The target host is configurable via the same
+`SJBIS_REMOTE_*` env vars (defaults target the reference `dertog` deployment).
+The remote must already have a `sjbis` new enough to have the `upgrade`
+subcommand (≥ 0.1.2); for a first install on an older box, run
 `build-and-deploy.sh` once.
 
 ### Release builds (CI)
@@ -468,14 +485,14 @@ tarballs them with a `.sha256`, and attaches them to the GitHub Release that
 
 ```bash
 # Cut a release
-git tag v0.1.2 && git push origin v0.1.2
+git tag v0.1.3 && git push origin v0.1.3
 ```
 
 ## Environment Variables
 
 | Variable | Purpose |
 |---|---|
-| `SJBIS_DAEMON` | Override daemon URL the CLI talks to. Defaults to `http://localhost:7878`; in this setup the client targets the remote daemon `http://192.168.0.138:7878` (set here or in `~/.config/sjbis/daemon.toml`). |
+| `SJBIS_DAEMON` | Daemon URL the CLI talks to. Defaults to `http://localhost:7878`. Set this (or `~/.config/sjbis/daemon.toml`) to point at a remote daemon host. |
 | `FIREWORKS_API_KEY` | Enable AI-powered rule compilation and renderer guessing |
 
 ## Troubleshooting
