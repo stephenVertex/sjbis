@@ -388,14 +388,31 @@ pub fn parse_deadline(s: &str) -> anyhow::Result<DateTime<Utc>> {
     Ok(now + dur)
 }
 
-/// Generate deterministic OKLCH color from agent name
+/// Generate a deterministic, visually-distinct OKLCH color from an agent name.
+///
+/// Uses a curated palette of well-separated hues (rather than a raw
+/// `hash % 360`, which can map different agents to near-identical hues) and
+/// nudges lightness/chroma per slot so adjacent cards read as clearly
+/// different colors. Deterministic: the same name always yields the same color.
 pub fn agent_color(name: &str) -> String {
+    // Hand-tuned hue stops spread around the wheel for maximum separation
+    // (lime, teal, blue, violet, magenta, red, orange, amber, green, cyan).
+    const HUES: [f64; 10] = [
+        130.0, 175.0, 245.0, 295.0, 330.0, 25.0, 55.0, 90.0, 150.0, 210.0,
+    ];
+    // Slight lightness offsets so two agents that land in nearby hues still
+    // differ in tone.
+    const LIGHTS: [f64; 3] = [72.0, 78.0, 84.0];
+
     let mut h = 0u32;
     for c in name.chars() {
         h = h.wrapping_mul(31).wrapping_add(c as u32);
     }
-    let hue = (h % 360) as f64;
-    format!("oklch(78% 0.18 {})", hue)
+    let hue = HUES[(h as usize) % HUES.len()];
+    // Use a different part of the hash for lightness so it's decorrelated from hue.
+    let light = LIGHTS[((h >> 8) as usize) % LIGHTS.len()];
+    // Higher chroma than before for more saturated, distinguishable cards.
+    format!("oklch({}% 0.21 {})", light, hue)
 }
 
 /// Generate a short notification id
