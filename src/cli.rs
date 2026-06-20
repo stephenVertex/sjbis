@@ -277,6 +277,9 @@ pub struct AskArgs {
     /// Privacy mode: public | redact-pii | private
     #[arg(long)]
     pub privacy: Option<String>,
+    /// Multi-question form: JSON array of sub-questions (or @file)
+    #[arg(long)]
+    pub form: Option<String>,
     /// Daemon URL override
     #[arg(long)]
     pub daemon: Option<String>,
@@ -285,6 +288,7 @@ pub struct AskArgs {
 impl AskArgs {
     pub fn question_type(&self) -> Option<crate::models::QuestionType> {
         use crate::models::QuestionType;
+        if self.form.is_some() { return Some(QuestionType::Form); }
         if self.yesno { return Some(QuestionType::YesNo); }
         if self.choices.is_some() { return Some(QuestionType::Multichoice); }
         if self.text { return Some(QuestionType::FreeText); }
