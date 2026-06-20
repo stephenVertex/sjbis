@@ -240,6 +240,18 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         None
     };
 
+    // Build sub_questions from --form (JSON array or @file)
+    let sub_questions = if let Some(ref raw) = args.form {
+        let json_str = if raw.starts_with('@') {
+            tokio::fs::read_to_string(&raw[1..]).await.ok()
+        } else {
+            Some(raw.clone())
+        };
+        json_str.and_then(|s| serde_json::from_str::<Vec<SubQuestion>>(&s).ok())
+    } else {
+        None
+    };
+
     let req = AskRequest {
         question: unescape(&args.question),
         agent_name: args.agent_name.clone(),
@@ -269,6 +281,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         slots,
         mute_key: args.mute_key.clone(),
         privacy: args.privacy.clone(),
+        sub_questions,
     };
 
     let resp = client

@@ -10,7 +10,7 @@ pub struct Db {
 
 // Explicit column list to avoid PostgreSQL "cached plan must not change result type"
 // errors when columns are added via migrations.
-const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note";
+const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note, sub_questions";
 
 impl Db {
     pub async fn connect(dsn: &str) -> Result<Self> {
@@ -29,6 +29,7 @@ impl Db {
         let diff = n.diff.as_ref().map(|d| serde_json::to_value(d).unwrap());
         let items = n.items.as_ref().map(|i| serde_json::to_value(i).unwrap());
         let slots = n.slots.as_ref().map(|s| serde_json::to_value(s).unwrap());
+        let sub_questions = n.sub_questions.as_ref().map(|s| serde_json::to_value(s).unwrap());
         let deadline = n.deadline;
         let created_at = n.created_at;
         let answered_at = n.answered_at;
@@ -41,10 +42,10 @@ impl Db {
                 created_at, answered_at, answer, answer_label,
                 choices, yes_label, no_label, placeholder, suggestions,
                 min, max, step, default_value, unit, accept, diff, ack_label,
-                items, slots, mute_key, caller_id
+                items, slots, mute_key, caller_id, sub_questions
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                      $27, $28, $29, $30, $31, $32, $33, $34, $35)"#,
+                      $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)"#,
         )
         .bind(&n.id)
         .bind(&n.agent_name)
@@ -81,6 +82,7 @@ impl Db {
         .bind(slots)
         .bind(&n.mute_key)
         .bind(&n.caller_id)
+        .bind(sub_questions)
         .execute(&self.pool)
         .await?;
 
@@ -349,6 +351,9 @@ impl Db {
         let slots_val: Option<serde_json::Value> = row.try_get("slots")?;
         let slots = slots_val.and_then(|v| serde_json::from_value(v).ok());
 
+        let sub_questions_val: Option<serde_json::Value> = row.try_get("sub_questions")?;
+        let sub_questions = sub_questions_val.and_then(|v| serde_json::from_value(v).ok());
+
         let deadline: Option<DateTime<Utc>> = row.try_get("deadline")?;
         let created_at: DateTime<Utc> = row.try_get("created_at")?;
         let answered_at: Option<DateTime<Utc>> = row.try_get("answered_at")?;
@@ -398,6 +403,7 @@ impl Db {
             caller_id: row.try_get("caller_id")?,
             snooze_until: row.try_get("snooze_until").ok(),
             note: row.try_get("note").ok(),
+            sub_questions,
         })
     }
 

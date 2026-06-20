@@ -174,6 +174,7 @@ pub async fn ask(
         caller_id: req.id.clone(),
         snooze_until: None,
         note: None,
+        sub_questions: req.sub_questions.clone(),
     };
 
     // Apply urgency from AI router if confidence is high

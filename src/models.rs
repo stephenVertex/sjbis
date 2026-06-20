@@ -25,6 +25,8 @@ pub enum QuestionType {
     PickList,
     #[serde(rename = "schedule")]
     Schedule,
+    #[serde(rename = "form")]
+    Form,
 }
 
 impl std::fmt::Display for QuestionType {
@@ -39,6 +41,7 @@ impl std::fmt::Display for QuestionType {
             QuestionType::Ack => "ack",
             QuestionType::PickList => "picklist",
             QuestionType::Schedule => "schedule",
+            QuestionType::Form => "form",
         };
         write!(f, "{}", s)
     }
@@ -57,6 +60,7 @@ impl std::str::FromStr for QuestionType {
             "ack" => Ok(QuestionType::Ack),
             "picklist" => Ok(QuestionType::PickList),
             "schedule" => Ok(QuestionType::Schedule),
+            "form" => Ok(QuestionType::Form),
             _ => Err(format!("unknown question type: {}", s)),
         }
     }
@@ -68,6 +72,30 @@ pub struct Choice {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubQuestion {
+    pub key: String,
+    pub question: String,
+    pub shape: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub choices: Option<Vec<Choice>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "default")]
+    pub default_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ack_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +201,8 @@ pub struct Notification {
     pub snooze_until: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_questions: Option<Vec<SubQuestion>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -299,6 +329,8 @@ pub struct AskRequest {
     pub mute_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub privacy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_questions: Option<Vec<SubQuestion>>,
 }
 
 /// Answer submitted by the user via dashboard

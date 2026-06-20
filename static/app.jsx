@@ -29,6 +29,7 @@ const TYPE_ICONS = {
   ack:         '✓',
   picklist:    '☰',
   schedule:    '◷',
+  form:        '▤',
 };
 
 // Global API helpers

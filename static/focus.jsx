@@ -12,6 +12,7 @@ const TYPE_LABEL = {
   ack: 'Acknowledge',
   picklist: 'Pick from list',
   schedule: 'Schedule',
+  form: 'Form',
 };
 
 // Convert "-00:01:42" to "1m 42s ago"
@@ -44,6 +45,11 @@ function normalizeNotif(n) {
     defaultValue: n.defaultValue !== undefined ? n.defaultValue : n.default_value,
     deadlineMs: n.deadlineMs || (n.deadline ? Math.max(0, new Date(n.deadline) - Date.now()) : undefined),
     sentAt: n.sentAt || n.created_at || '',
+    subQuestions: (n.subQuestions || n.sub_questions || []).map((sq) => ({
+      ...sq,
+      ackLabel: sq.ackLabel || sq.ack_label,
+      default: sq.defaultValue !== undefined ? sq.defaultValue : sq.default_value,
+    })),
   };
 }
 
@@ -640,6 +646,118 @@ function ScheduleRenderer({ n, onAnswer }) {
   );
 }
 
+function FormRenderer({ n, onAnswer }) {
+  const subs = n.subQuestions || [];
+  const [answers, setAnswers] = React.useState({});
+  const allAnswered = subs.every((sq) => answers[sq.key] !== undefined && answers[sq.key] !== '');
+
+  const setAnswer = (key, value) => setAnswers((a) => ({ ...a, [key]: value }));
+
+  return (
+    <>
+      <div className="form-widgets">
+        {subs.map((sq) => (
+          <div key={sq.key} className="form-sub">
+            <div className="form-sub-label">{sq.question}</div>
+            {sq.detail && <div className="form-sub-detail">{sq.detail}</div>}
+            <FormSubWidget sq={sq} value={answers[sq.key]} onChange={(v) => setAnswer(sq.key, v)} />
+            {answers[sq.key] !== undefined && answers[sq.key] !== '' ? (
+              <div className="form-sub-answered">✓</div>
+            ) : (
+              <div className="form-sub-pending">—</div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="action-row">
+        <button className="btn-action ghost" onClick={() => onAnswer('(skipped)')}>Skip</button>
+        <button
+          className="btn-action primary"
+          disabled={!allAnswered}
+          onClick={() => onAnswer(JSON.stringify(answers))}
+        >
+          Submit All <span className="k">⏎</span>
+        </button>
+      </div>
+    </>
+  );
+}
+
+function FormSubWidget({ sq, value, onChange }) {
+  switch (sq.shape) {
+    case 'yesno':
+      return (
+        <div className="form-sub-yesno">
+          <button
+            className={'form-sub-btn yes' + (value === 'Yes' ? ' selected' : '')}
+            onClick={() => onChange('Yes')}
+          >Yes</button>
+          <button
+            className={'form-sub-btn no' + (value === 'No' ? ' selected' : '')}
+            onClick={() => onChange('No')}
+          >No</button>
+        </div>
+      );
+    case 'numeric': {
+      const v = value !== undefined ? parseFloat(value) : (sq.default ?? sq.min ?? 0);
+      const min = sq.min ?? 0;
+      const max = sq.max ?? 100;
+      const step = sq.step ?? 1;
+      const unit = sq.unit ?? '';
+      const setV = (x) => onChange(String(x));
+      const pct = ((v - min) / (max - min)) * 100;
+      return (
+        <div className="form-sub-numeric">
+          <div className="form-sub-num-val">{v}{unit ? ' ' + unit : ''}</div>
+          <input
+            type="range"
+            min={min} max={max} step={step}
+            value={v}
+            onChange={(e) => setV(parseFloat(e.target.value))}
+          />
+          <div className="form-sub-num-ticks"><span>{min}{unit}</span><span>{max}{unit}</span></div>
+        </div>
+      );
+    }
+    case 'freetext':
+      return (
+        <textarea
+          className="form-sub-textarea"
+          value={value || ''}
+          placeholder="Type your answer…"
+          onChange={(e) => onChange(e.target.value)}
+        />
+      );
+    case 'ack':
+      return (
+        <button
+          className={'form-sub-ack-btn' + (value === 'acknowledged' ? ' selected' : '')}
+          onClick={() => onChange('acknowledged')}
+        >
+          {sq.ack_label || 'Acknowledge'}
+        </button>
+      );
+    case 'multichoice': {
+      const choices = sq.choices || [];
+      return (
+        <div className="form-sub-choices">
+          {choices.map((c) => (
+            <button
+              key={c.value}
+              className={'form-sub-choice' + (value === c.value ? ' selected' : '')}
+              onClick={() => onChange(c.value)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+      );
+    }
+    default:
+      return <div className="form-sub-unknown">Unknown shape: {sq.shape}</div>;
+  }
+}
+
 const RENDERERS = {
   yesno: YesNoRenderer,
   multichoice: MultiChoiceRenderer,
@@ -650,6 +768,7 @@ const RENDERERS = {
   ack: AckRenderer,
   picklist: PicklistRenderer,
   schedule: ScheduleRenderer,
+  form: FormRenderer,
 };
 
 // ── Snooze picker ─────────────────────────────────────────────────────────
