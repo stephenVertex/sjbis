@@ -106,6 +106,86 @@ async function apiDeleteRule(id) {
   await fetch(`${API_BASE}/rules/${id}`, { method: 'DELETE' });
 }
 
+// ── Browser-tab notification indicator ─────────────────────────────────
+// Updates the page title and favicon to reflect pending (unanswered)
+// notifications. When asks are waiting, the title is prefixed with a count
+// and a red-dot emoji, and the generated favicon gets a siren badge.
+
+const DEFAULT_TITLE = 'SJBIS · Information Surfacer';
+const FAVICON_SIZE = 64;
+const FAVICON_BG = '#0B0C0F';
+const FAVICON_ACCENT = '#C7F33D';
+const FAVICON_BADGE = '#FF1F4D';
+
+function drawFavicon(pending) {
+  const canvas = document.createElement('canvas');
+  canvas.width = FAVICON_SIZE;
+  canvas.height = FAVICON_SIZE;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  // Rounded square background
+  const r = 12;
+  ctx.fillStyle = FAVICON_BG;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.lineTo(FAVICON_SIZE - r, 0);
+  ctx.quadraticCurveTo(FAVICON_SIZE, 0, FAVICON_SIZE, r);
+  ctx.lineTo(FAVICON_SIZE, FAVICON_SIZE - r);
+  ctx.quadraticCurveTo(FAVICON_SIZE, FAVICON_SIZE, FAVICON_SIZE - r, FAVICON_SIZE);
+  ctx.lineTo(r, FAVICON_SIZE);
+  ctx.quadraticCurveTo(0, FAVICON_SIZE, 0, FAVICON_SIZE - r);
+  ctx.lineTo(0, r);
+  ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Branded "S"
+  ctx.fillStyle = FAVICON_ACCENT;
+  ctx.font = 'bold 36px Space Grotesk, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('S', FAVICON_SIZE / 2, FAVICON_SIZE / 2);
+
+  if (pending > 0) {
+    const badgeR = 10;
+    const bx = FAVICON_SIZE - badgeR - 2;
+    const by = badgeR + 2;
+    ctx.beginPath();
+    ctx.arc(bx, by, badgeR, 0, Math.PI * 2);
+    ctx.fillStyle = FAVICON_BADGE;
+    ctx.fill();
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 11px sans-serif';
+    const text = pending > 9 ? '9+' : String(pending);
+    ctx.fillText(text, bx, by + 1);
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+function setTabIndicator(pending) {
+  if (typeof document === 'undefined') return;
+  if (window.__sjbisOriginalTitle == null) {
+    window.__sjbisOriginalTitle = document.title || DEFAULT_TITLE;
+  }
+  const count = pending || 0;
+  const prefix = count > 0 ? `(${count}) 🔴 ` : '';
+  document.title = prefix + window.__sjbisOriginalTitle;
+
+  const link = document.querySelector('link[rel~="icon"]');
+  if (link) {
+    link.href = drawFavicon(count);
+  } else {
+    const newLink = document.createElement('link');
+    newLink.rel = 'icon';
+    newLink.type = 'image/png';
+    newLink.href = drawFavicon(count);
+    document.head.appendChild(newLink);
+  }
+}
+
 // Live-ticking deadline countdown shown on a card footer.
 // Updates every second; shows MM:SS, or Ns when under a minute, and EXPIRED at zero.
 function CardCountdown({ deadline }) {
@@ -562,6 +642,11 @@ function App() {
     const k = (t.motionIntensity ?? 7) / 7;
     document.documentElement.style.setProperty('--motion-k', k);
   }, [t.motionIntensity]);
+
+  // Browser tab indicator: title prefix + badged favicon reflect pending asks
+  React.useEffect(() => {
+    setTabIndicator(notifications.length);
+  }, [notifications.length]);
 
   // Counts per agent for rail badges
   const counts = React.useMemo(() => {
