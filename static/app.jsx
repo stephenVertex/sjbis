@@ -32,8 +32,11 @@ const TYPE_ICONS = {
   form:        '▤',
 };
 
-// Global API helpers
-const API_BASE = window.location.origin;
+// Global API helpers.
+// Include the directory the app is served from so the dashboard also works
+// behind a path-prefixed reverse proxy (e.g. https://host/sjbis/ → daemon).
+// At the daemon root (http://host:7878/) this is just the origin.
+const API_BASE = window.location.origin + window.location.pathname.replace(/(\/index\.html)?\/?$/, '');
 
 // Deduplicate a list of items by `id`, keeping the FIRST occurrence.
 // History is built newest-first, so the first occurrence is the freshest.
