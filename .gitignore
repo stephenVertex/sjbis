@@ -32,3 +32,15 @@ daemon.toml
 entities.toml
 **/database.toml
 **/daemon.toml
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+
+# iOS / XcodeGen
+ios/*.xcodeproj
+ios/build/
+ios/Local.xcconfig
+**/*.xcuserstate
+**/xcuserdata/
+**/.DS_Store

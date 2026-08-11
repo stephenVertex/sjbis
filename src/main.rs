@@ -4,6 +4,7 @@ mod db;
 mod entities;
 mod handlers;
 mod models;
+mod push;
 mod router;
 mod rules;
 mod sse;

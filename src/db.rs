@@ -328,6 +328,40 @@ impl Db {
         Ok(agent)
     }
 
+    // ── Device Tokens ──────────────────────────────────────────────────
+
+    pub async fn register_device_token(&self, token: &str, device_name: Option<&str>) -> Result<()> {
+        sqlx::query(
+            r#"INSERT INTO device_tokens (token, device_name)
+               VALUES ($1, $2)
+               ON CONFLICT (token) DO UPDATE SET
+                   device_name = EXCLUDED.device_name,
+                   last_seen = NOW()"#,
+        )
+        .bind(token)
+        .bind(device_name)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unregister_device_token(&self, token: &str) -> Result<()> {
+        sqlx::query("DELETE FROM device_tokens WHERE token = $1")
+            .bind(token)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_device_tokens(&self) -> Result<Vec<(String, Option<String>)>> {
+        let rows = sqlx::query("SELECT token, device_name FROM device_tokens")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter()
+            .map(|r| Ok((r.try_get::<String, _>("token")?, r.try_get::<Option<String>, _>("device_name")?)))
+            .collect()
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     fn row_to_notification(row: &sqlx::postgres::PgRow) -> anyhow::Result<Notification> {

@@ -1,0 +1,40 @@
+name: Sjbis
+options:
+  bundleIdPrefix: $(BUNDLE_PREFIX)
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: $(DEVELOPMENT_TEAM)
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    ENABLE_BITCODE: NO
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+configs:
+  Debug: debug
+  Release: release
+configFiles:
+  Debug: Local.xcconfig
+  Release: Local.xcconfig
+targets:
+  Sjbis:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sjbis
+    entitlements:
+      path: Sjbis/Sjbis.entitlements
+      properties:
+        com.apple.developer.push-notifications: true
+        com.apple.developer.aps-environment: development
+    settings:
+      base:
+        INFOPLIST_FILE: Sjbis/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        PRODUCT_BUNDLE_IDENTIFIER: $(BUNDLE_PREFIX).Sjbis
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"

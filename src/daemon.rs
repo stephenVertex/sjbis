@@ -3,6 +3,7 @@ use crate::models::*;
 use crate::db::Db;
 use crate::router::AiRouter;
 use crate::sse::Broadcaster;
+use crate::push::ApnsClient;
 use axum::{
     routing::{delete, get, post},
     Router,
@@ -44,11 +45,41 @@ pub async fn run_daemon(
 
     let router = api_key.map(AiRouter::new);
 
+    // Initialize APNs client if configured
+    let apns = if let (Ok(key_path), Ok(team_id), Ok(key_id)) = (
+        std::env::var("APNS_KEY_PATH"),
+        std::env::var("APNS_TEAM_ID"),
+        std::env::var("APNS_KEY_ID"),
+    ) {
+        match std::fs::read_to_string(&key_path) {
+            Ok(pem) => {
+                match ApnsClient::new(&team_id, &key_id, &pem) {
+                    Ok(client) => {
+                        tracing::info!("APNs push notifications enabled (team={}, key={})", team_id, key_id);
+                        Some(client)
+                    }
+                    Err(e) => {
+                        tracing::warn!("APNs client init failed: {}", e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("APNs key file not found at {}: {}", key_path, e);
+                None
+            }
+        }
+    } else {
+        tracing::info!("APNs not configured (set APNS_KEY_PATH, APNS_TEAM_ID, APNS_KEY_ID to enable push)");
+        None
+    };
+
     let state = AppState {
         db,
         broadcaster: Broadcaster::new(),
         router: Arc::new(router),
         waiters: Arc::new(Mutex::new(HashMap::new())),
+        apns: Arc::new(Mutex::new(apns)),
     };
 
     let app = Router::new()
@@ -68,6 +99,8 @@ pub async fn run_daemon(
         .route("/rules", post(create_rule))
         .route("/rules/{id}", delete(delete_rule))
         .route("/agents", get(list_agents).post(register_agent))
+        .route("/device/register", post(register_device))
+        .route("/device/unregister", post(unregister_device))
         .fallback_service(ServeDir::new("static"))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())

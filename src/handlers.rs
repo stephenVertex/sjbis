@@ -3,6 +3,7 @@ use crate::models::*;
 use crate::router::AiRouter;
 use crate::rules;
 use crate::sse::Broadcaster;
+use crate::push::ApnsClient;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -26,6 +27,7 @@ pub struct AppState {
     pub broadcaster: Broadcaster,
     pub router: Arc<Option<AiRouter>>,
     pub waiters: Waiters,
+    pub apns: Arc<Mutex<Option<ApnsClient>>>,
 }
 
 fn db_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<serde_json::Value>) {
@@ -225,6 +227,11 @@ pub async fn ask(
 
     // Broadcast to all SSE clients
     state.broadcaster.broadcast(&SseEvent::NotificationCreated { notification: notification.clone() });
+
+    // Send push notifications to registered iOS devices
+    if notification.urgency >= 2 {
+        send_push_notifications(&state, &notification).await;
+    }
 
     Ok(Json(notification))
 }
@@ -837,5 +844,75 @@ pub struct CreateRuleBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<chrono::DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expires_in: Option<String>, // duration like "1h", "30m"
+    pub expires_in: Option<String>,
+}
+
+// ── Device token registration ────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct DeviceRegisterRequest {
+    pub token: String,
+    pub device_name: Option<String>,
+}
+
+pub async fn register_device(
+    State(state): State<AppState>,
+    Json(req): Json<DeviceRegisterRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    state.db.register_device_token(&req.token, req.device_name.as_deref())
+        .await
+        .map_err(db_err)?;
+    tracing::info!("registered device token (first 8: {}…)", &req.token[..8.min(req.token.len())]);
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn unregister_device(
+    State(state): State<AppState>,
+    Json(req): Json<DeviceRegisterRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    state.db.unregister_device_token(&req.token)
+        .await
+        .map_err(db_err)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ── Push notification helper ─────────────────────────────────────────────
+
+async fn send_push_notifications(state: &AppState, notif: &Notification) {
+    let tokens = match state.db.list_device_tokens().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("failed to list device tokens: {}", e);
+            return;
+        }
+    };
+    if tokens.is_empty() {
+        return;
+    }
+
+    let mut apns_guard = state.apns.lock().await;
+    let apns = match apns_guard.as_mut() {
+        Some(a) => a,
+        None => {
+            tracing::debug!("APNs not configured, skipping push");
+            return;
+        }
+    };
+
+    let title = if notif.urgency >= 4 {
+        format!("🚨 {}", notif.agent_name)
+    } else {
+        notif.agent_name.clone()
+    };
+    let body = if notif.question.len() > 100 {
+        format!("{}…", &notif.question[..100])
+    } else {
+        notif.question.clone()
+    };
+
+    for (token, _name) in &tokens {
+        if let Err(e) = apns.send(token, &title, &body, Some(&notif.id)).await {
+            tracing::warn!("push to {}… failed: {}", &token[..8.min(token.len())], e);
+        }
+    }
 }
