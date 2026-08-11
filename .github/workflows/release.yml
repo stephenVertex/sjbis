@@ -15,7 +15,7 @@ name: release
 #
 # Compute is offloaded to self-hosted runners when available:
 #   - aarch64-apple-darwin  → self-hosted `sjbmbp` (spare M1), else macos-14
-#   - x86_64-unknown-linux-musl → self-hosted `homestar-runner-sjbis`, else ubuntu-latest
+#   - x86_64-unknown-linux-musl → self-hosted `seykhl-actions-sjbis`, else ubuntu-latest
 #
 # (An x86_64 macOS / Intel build is intentionally not produced; add one only
 # if there's actual demand for Intel Macs.)
@@ -74,7 +74,7 @@ jobs:
           }
 
           macos=$(choose "sjbmbp" '["self-hosted","sjbmbp"]' '"macos-14"')
-          linux=$(choose "homestar-runner-sjbis" '["self-hosted","homestar-runner"]' '"ubuntu-latest"')
+          linux=$(choose "seykhl-actions-sjbis" '["self-hosted","sjbis-ci"]' '"ubuntu-latest"')
 
           echo "macos_arm64=$macos" >> "$GITHUB_OUTPUT"
           echo "linux_musl=$linux" >> "$GITHUB_OUTPUT"
