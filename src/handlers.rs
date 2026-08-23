@@ -6,8 +6,8 @@ use crate::sse::Broadcaster;
 use crate::push::ApnsClient;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::{sse::Event, Sse},
+    http::{HeaderName, HeaderValue, StatusCode},
+    response::{sse::Event, IntoResponse, Response, Sse},
     Json,
 };
 use chrono::Utc;
@@ -427,20 +427,30 @@ pub async fn history(
     Ok(Json(items))
 }
 
+fn disable_proxy_buffering(response: impl IntoResponse) -> Response {
+    let mut response = response.into_response();
+    response.headers_mut().insert(
+        HeaderName::from_static("x-accel-buffering"),
+        HeaderValue::from_static("no"),
+    );
+    response
+}
+
 /// GET /events — SSE stream for live dashboard updates
-pub async fn events(State(state): State<AppState>) -> Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>> {
+pub async fn events(State(state): State<AppState>) -> Response {
     let rx = state.broadcaster.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|result| {
         match result {
-            Ok(json) => Some(Ok(Event::default().data(json))),
+            Ok(json) => Some(Ok::<Event, axum::Error>(Event::default().data(json))),
             Err(_) => None, // lagged, drop
         }
     });
-    Sse::new(stream).keep_alive(
+    let response = Sse::new(stream).keep_alive(
         axum::response::sse::KeepAlive::new()
             .interval(std::time::Duration::from_secs(15))
             .text(""),
-    )
+    );
+    disable_proxy_buffering(response)
 }
 
 /// POST /rules — create a rule
@@ -914,5 +924,20 @@ async fn send_push_notifications(state: &AppState, notif: &Notification) {
         if let Err(e) = apns.send(token, &title, &body, Some(&notif.id)).await {
             tracing::warn!("push to {}… failed: {}", &token[..8.min(token.len())], e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sse_response_disables_nginx_buffering() {
+        let response = disable_proxy_buffering(());
+
+        assert_eq!(
+            response.headers().get("x-accel-buffering"),
+            Some(&HeaderValue::from_static("no")),
+        );
     }
 }
