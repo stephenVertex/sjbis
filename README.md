@@ -286,6 +286,38 @@ The `sjbis` binary is both the client (talks to the daemon) and the daemon itsel
 Run `sjbis prime` first when wiring up a new agent — it prints the live daemon
 status and the exact pattern to follow.
 
+### Supplying ask content over stdin
+
+Interactive calls can continue to pass content with `--question`, `--detail`,
+and `--detail-markdown`, as the examples above do. For an integration that
+launches `sjbis ask` as a subprocess and needs its message content kept out of
+that child process's argument list, use `--content-stdin` instead:
+
+```bash
+# The JSON below is stdin for sjbis, not an argument to either command.
+cat <<'JSON' | sjbis ask --content-stdin --yesno \
+  --agent-name mail-triage --blocking --json
+{
+  "question": "<question text>",
+  "detail": "<optional plain-text context>",
+  "detail_markdown": "<optional markdown context>"
+}
+JSON
+```
+
+`--content-stdin` reads one JSON object. Its `question` string is required;
+`detail` and `detail_markdown` are optional strings, and unknown content fields
+are rejected. It cannot be combined with `--question`, `--detail`, or
+`--detail-markdown`; those flags remain the existing argv-content mode. All
+other `ask` flags, including `--agent-name`, answer-shape flags, `--blocking`,
+and `--json`, work unchanged.
+
+This is intended for subprocess integrations that carry message bodies, links,
+or tokens: write that payload to stdin rather than constructing a command line
+with it. The mode avoids ordinary inspection of the `sjbis ask` process's
+arguments; it is not encryption or a broader claim about content after `sjbis`
+has read it and sent it to the daemon.
+
 ## Working agreement for agents
 
 When an agent (script or AI) needs a human decision, the intended pattern is a

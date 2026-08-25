@@ -7,10 +7,33 @@ Surfaces Gmail and Google Chat messages as SJBIS notifications. Uses AI to class
 1. **Polls Gmail** every 60 seconds for unread threads
 2. **Fetches email body** via `gog gmail get` (not just subject/snippet)
 3. **AI classification** asks: "Is this a direct question requiring a human response?"
-4. **Surfaces** to the SJBIS dashboard via HTTP POST to the daemon
+4. **Surfaces** through `sjbis ask`, which posts to the SJBIS daemon
 5. **Waits** for you to answer on the dashboard
 6. **Sends reply** back via `gog gmail send` with the correct thread
 7. **Marks as read** to prevent resurfacing
+
+## Privacy of the `sjbis ask` handoff
+
+When `sjbis-gog` surfaces a Gmail or Google Chat decision, it starts the
+blocking `sjbis ask` child with `--content-stdin`. The Gmail/Chat-derived
+question and detail bodies are sent as its stdin JSON payload:
+
+```json
+{"question":"<message-derived question>","detail":"<message-derived detail>"}
+```
+
+They are not passed with `--question` or `--detail`, so embedded links and
+token-like text from those bodies do not appear in that child process's
+arguments. Its argv retains only non-message invocation metadata: the `ask`
+subcommand, `--content-stdin`, answer/blocking/output flags, the configured
+agent name, and the profile/source `--instance` value.
+
+This requires an `sjbis` CLI that supports `--content-stdin`; an older CLI will
+reject the invocation rather than causing the plugin to fall back to content on
+argv. The scope is deliberately narrow: it covers this Gmail/Chat-to-blocking
+`sjbis ask` handoff only. It does not claim that other `gog` subprocesses,
+reply handling, SJBIS storage or logging, or unrelated plugins have been
+audited or secured by this change.
 
 ## Prerequisites
 
