@@ -15,6 +15,42 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use models::*;
 
+/// Question content supplied by `sjbis ask --content-stdin`.
+///
+/// Keeping this separate from `AskArgs` ensures that question text and detail
+/// never need to appear in the invoking process's arguments.
+#[derive(Debug, serde::Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct StdinAskContent {
+    question: String,
+    #[serde(default)]
+    detail: Option<String>,
+    #[serde(default)]
+    detail_markdown: Option<String>,
+}
+
+fn parse_stdin_ask_content(input: &str) -> Result<StdinAskContent> {
+    if input.trim().is_empty() {
+        anyhow::bail!(
+            "stdin content is empty; expected a JSON object with required `question` and optional `detail` or `detail_markdown` fields"
+        );
+    }
+
+    serde_json::from_str(input).context(
+        "invalid stdin content; expected a JSON object with required `question` and optional `detail` or `detail_markdown` fields",
+    )
+}
+
+fn read_stdin_ask_content() -> Result<StdinAskContent> {
+    use std::io::Read;
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("failed to read stdin content")?;
+    parse_stdin_ask_content(&input)
+}
+
 /// Unescape common escape sequences in a string (\\n → newline, \\t → tab, etc.)
 fn unescape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -195,6 +231,20 @@ fn cmd_entity(command: cli::EntityCommands) -> Result<()> {
 }
 
 async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
+    // Read and validate stdin before creating a request. JSON input is already
+    // decoded, so unlike argv input it must not receive escape processing.
+    let content = if args.content_stdin {
+        read_stdin_ask_content()?
+    } else {
+        StdinAskContent {
+            question: unescape(args.question.as_deref().context(
+                "missing --question; use --content-stdin to read content from stdin",
+            )?),
+            detail: args.detail.as_deref().map(unescape),
+            detail_markdown: args.detail_markdown.as_deref().map(unescape),
+        }
+    };
+
     let url = cli::daemon_url(args.daemon.clone());
     let client = reqwest::Client::new();
 
@@ -236,7 +286,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
     let diff = if args.diff {
         // Auto-generate a synthetic diff preview from detail text when no
         // explicit diff is provided (e.g. via stdin or a future --diff-file).
-        Some(generate_synthetic_diff(&args.detail, &args.question))
+        Some(generate_synthetic_diff(&content.detail, &content.question))
     } else {
         None
     };
@@ -254,11 +304,11 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
     };
 
     let req = AskRequest {
-        question: unescape(&args.question),
+        question: content.question,
         agent_name: args.agent_name.clone(),
         instance: args.instance.clone(),
-        detail: args.detail.as_ref().map(|d| unescape(d)),
-        detail_markdown: args.detail_markdown.as_ref().map(|d| unescape(d)),
+        detail: content.detail,
+        detail_markdown: content.detail_markdown,
         urgency: args.urgency,
         blocking: args.blocking,
         deadline: args.deadline.clone(),
@@ -853,4 +903,33 @@ async fn cmd_register(agent_name: String, glyph: Option<String>, color: Option<S
 
 async fn cmd_upgrade(check: bool, force: bool, tag: Option<String>) -> Result<()> {
     upgrade::run(check, force, tag).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stdin_content_preserves_multiline_unicode_and_url_like_text() {
+        let content = parse_stdin_ask_content(r#"{
+            "question": "¿Aprobar el despliegue? 🔐\nRevisar antes de continuar.",
+            "detail_markdown": "Token-like value: ghp_abc123\n[Review](https://example.test/review?token=abc123)"
+        }"#).expect("valid stdin JSON should decode");
+
+        assert_eq!(content.question, "¿Aprobar el despliegue? 🔐\nRevisar antes de continuar.");
+        assert_eq!(
+            content.detail_markdown.as_deref(),
+            Some("Token-like value: ghp_abc123\n[Review](https://example.test/review?token=abc123)")
+        );
+        assert_eq!(content.detail, None);
+    }
+
+    #[test]
+    fn stdin_content_rejects_empty_malformed_and_missing_question() {
+        for input in ["", "{", r#"{"detail":"Context only"}"#] {
+            let err = parse_stdin_ask_content(input)
+                .expect_err("stdin content must be a valid object with a question");
+            assert!(err.to_string().contains("stdin content"), "error should identify stdin content: {err:#}");
+        }
+    }
 }

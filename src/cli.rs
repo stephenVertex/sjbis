@@ -179,14 +179,17 @@ pub enum DaemonCommands {
 #[derive(Parser, Clone)]
 pub struct AskArgs {
     /// Question text (max 280 chars recommended)
-    #[arg(short, long)]
-    pub question: String,
+    #[arg(short, long, required_unless_present = "content_stdin", conflicts_with = "content_stdin")]
+    pub question: Option<String>,
     /// Extra context paragraph
-    #[arg(long)]
+    #[arg(long, conflicts_with = "content_stdin")]
     pub detail: Option<String>,
     /// Extra context as markdown (renders bold, lists, links, etc.)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "content_stdin")]
     pub detail_markdown: Option<String>,
+    /// Read question content from stdin as JSON: {"question":"...","detail":"...","detail_markdown":"..."}. Keeps content out of process arguments.
+    #[arg(long)]
+    pub content_stdin: bool,
     /// Answer shape: yes/no
     #[arg(long)]
     pub yesno: bool,
@@ -338,6 +341,54 @@ pub fn pidfile_path() -> PathBuf {
     let dir = dirs::data_dir().unwrap_or_else(|| std::env::temp_dir()).join("sjbis");
     let _ = std::fs::create_dir_all(&dir);
     dir.join("daemon.pid")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::error::ErrorKind;
+
+    #[test]
+    fn ask_keeps_argv_content_compatible() {
+        let cli = Cli::try_parse_from([
+            "sjbis", "ask", "--question", "Deploy now?", "--detail",
+            "The release is ready.", "--agent-name", "deploybot",
+        ]).expect("existing argv content should parse");
+
+        let Commands::Ask(args) = cli.command else {
+            panic!("expected ask command");
+        };
+        assert_eq!(args.question.as_deref(), Some("Deploy now?"));
+        assert_eq!(args.detail.as_deref(), Some("The release is ready."));
+        assert!(!args.content_stdin);
+    }
+
+    #[test]
+    fn ask_allows_stdin_content_without_question() {
+        let cli = Cli::try_parse_from([
+            "sjbis", "ask", "--content-stdin", "--agent-name", "gog",
+        ]).expect("stdin content should satisfy the question requirement");
+
+        let Commands::Ask(args) = cli.command else {
+            panic!("expected ask command");
+        };
+        assert_eq!(args.question, None);
+        assert!(args.content_stdin);
+    }
+
+    #[test]
+    fn ask_rejects_mixed_stdin_and_argv_content() {
+        for argv in [
+            vec!["sjbis", "ask", "--content-stdin", "--question", "Question", "--agent-name", "gog"],
+            vec!["sjbis", "ask", "--content-stdin", "--detail-markdown", "# Context", "--agent-name", "gog"],
+        ] {
+            let err = match Cli::try_parse_from(argv) {
+                Ok(_) => panic!("mixed content sources should be rejected"),
+                Err(err) => err,
+            };
+            assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
+        }
+    }
 }
 
 /// Load Postgres DSN from ~/.config/sjbis/database.toml (or platform config dir)
