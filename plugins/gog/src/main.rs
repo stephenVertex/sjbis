@@ -11,6 +11,7 @@ use tracing::{debug, error, info, warn};
 
 mod ai_classifier;
 mod question_filter;
+mod sjbis_ask;
 
 #[derive(Parser)]
 #[command(name = "sjbis-gog")]
@@ -292,50 +293,6 @@ async fn fetch_chat_messages(config: &Config, profile: &str) -> Result<Vec<ChatM
     Ok(messages)
 }
 
-/// Surface a question via `sjbis ask` CLI
-async fn surface_question(
-    sjbis_binary: &str,
-    agent_name: &str,
-    profile: &str,
-    source: &str,
-    question: &str,
-    detail: &str,
-) -> Result<Option<String>> {
-    let mut cmd = Command::new(sjbis_binary);
-    cmd.arg("ask")
-        .arg("--question")
-        .arg(question)
-        .arg("--yesno")
-        .arg("--blocking")
-        .arg("--json")
-        .arg("--agent-name")
-        .arg(agent_name)
-        .arg("--instance")
-        .arg(format!("{} · {}", profile, source))
-        .arg("--detail")
-        .arg(detail)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let output = cmd.output().await.context("Failed to run sjbis ask")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("sjbis ask failed: {}", stderr);
-        return Err(anyhow::anyhow!("sjbis ask failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let response: serde_json::Value = serde_json::from_str(&stdout)
-        .context("Failed to parse sjbis response")?;
-
-    let answer = response.get("answer")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    Ok(answer)
-}
-
 /// Send a Gmail reply via gog
 async fn send_gmail_reply(config: &Config, profile: &str, thread_id: &str, subject: &str, reply: &str) -> Result<()> {
     info!("Sending Gmail reply to thread {} via gog", thread_id);
@@ -555,7 +512,7 @@ async fn gmail_poller_task(config: Config, profile: String, mut dedup: DedupCach
 
                     let detail = format!("Email: {}\nSubject: {}\nProfile: {}", thread.from, thread.subject, profile);
 
-                    match surface_question(&config.sjbis_binary, &config.agent_name, &profile, &thread.from, &question_text, &detail).await {
+                    match sjbis_ask::surface_question(&config.sjbis_binary, &config.agent_name, &profile, &thread.from, &question_text, &detail).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
                             if let Err(e) = send_gmail_reply(&config, &profile, &thread.id, &thread.subject, &answer).await {
@@ -636,7 +593,7 @@ async fn chat_poller_task(config: Config, profile: String, mut dedup: DedupCache
 
                     let detail = format!("Chat from {} in {}\nProfile: {}", msg.sender, msg.space, profile);
 
-                    match surface_question(&config.sjbis_binary, &config.agent_name, &profile, &msg.sender, &msg.text, &detail).await {
+                    match sjbis_ask::surface_question(&config.sjbis_binary, &config.agent_name, &profile, &msg.sender, &msg.text, &detail).await {
                         Ok(Some(answer)) => {
                             info!("Got answer: {}", answer);
                             // Extract space name from message id (spaces/xxx/messages/yyy)
