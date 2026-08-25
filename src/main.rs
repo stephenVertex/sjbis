@@ -913,15 +913,16 @@ mod tests {
     fn stdin_content_preserves_multiline_unicode_and_url_like_text() {
         let content = parse_stdin_ask_content(r#"{
             "question": "¿Aprobar el despliegue? 🔐\nRevisar antes de continuar.",
+            "detail": "A literal backslash sequence: \\n",
             "detail_markdown": "Token-like value: ghp_abc123\n[Review](https://example.test/review?token=abc123)"
         }"#).expect("valid stdin JSON should decode");
 
         assert_eq!(content.question, "¿Aprobar el despliegue? 🔐\nRevisar antes de continuar.");
+        assert_eq!(content.detail.as_deref(), Some("A literal backslash sequence: \\n"));
         assert_eq!(
             content.detail_markdown.as_deref(),
             Some("Token-like value: ghp_abc123\n[Review](https://example.test/review?token=abc123)")
         );
-        assert_eq!(content.detail, None);
     }
 
     #[test]
