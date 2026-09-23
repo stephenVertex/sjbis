@@ -168,6 +168,9 @@ pub enum DaemonCommands {
         /// Port to listen on
         #[arg(short, long, default_value = "7878")]
         port: u16,
+        /// URL prefix for all dashboard, asset, and API routes (the proxy must preserve it)
+        #[arg(long, default_value = "/")]
+        base_path: crate::daemon::BasePath,
         /// Background (detach)
         #[arg(short, long)]
         background: bool,
