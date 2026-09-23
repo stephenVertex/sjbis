@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 /// Unique notification id: sjbis-{nanoid}
@@ -66,12 +66,48 @@ impl std::str::FromStr for QuestionType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Choice {
     pub value: String,
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for Choice {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct CanonicalChoice {
+            value: String,
+            label: String,
+            #[serde(default)]
+            hint: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ChoiceInput {
+            String(String),
+            Canonical(CanonicalChoice),
+        }
+
+        Ok(match ChoiceInput::deserialize(deserializer)? {
+            ChoiceInput::String(value) => Self {
+                label: value.clone(),
+                value,
+                hint: None,
+            },
+            ChoiceInput::Canonical(choice) => Self {
+                value: choice.value,
+                label: choice.label,
+                hint: choice.hint,
+            },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -450,4 +486,100 @@ pub fn agent_color(name: &str) -> String {
 /// Generate a short notification id
 pub fn generate_id() -> String {
     format!("sjbis-{}", nanoid::nanoid!(8))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn ask_request_normalizes_mixed_choice_inputs() {
+        let request: AskRequest = serde_json::from_value(json!({
+            "question": "Which fixes should run?",
+            "question_type": "multichoice",
+            "choices": [
+                "Run formatter",
+                {
+                    "value": "tests",
+                    "label": "Run targeted tests",
+                    "hint": "Recommended"
+                }
+            ],
+            "sub_questions": [{
+                "key": "follow_up",
+                "question": "Then what?",
+                "shape": "multichoice",
+                "choices": ["Open PR"]
+            }]
+        }))
+        .expect("the producer wire union should deserialize");
+
+        assert_eq!(
+            request.choices,
+            Some(vec![
+                Choice {
+                    value: "Run formatter".to_string(),
+                    label: "Run formatter".to_string(),
+                    hint: None,
+                },
+                Choice {
+                    value: "tests".to_string(),
+                    label: "Run targeted tests".to_string(),
+                    hint: Some("Recommended".to_string()),
+                },
+            ])
+        );
+        let sub_question = request
+            .sub_questions
+            .expect("sub-question should be present")
+            .into_iter()
+            .next()
+            .expect("one sub-question should be present");
+        assert_eq!(
+            sub_question.choices,
+            Some(vec![Choice {
+                value: "Open PR".to_string(),
+                label: "Open PR".to_string(),
+                hint: None,
+            }])
+        );
+    }
+
+    #[test]
+    fn choices_serialize_and_storage_round_trip_as_canonical_objects() {
+        let legacy_jsonb = json!(["first", {"value": "second", "label": "Second"}]);
+        let choices: Vec<Choice> =
+            serde_json::from_value(legacy_jsonb).expect("legacy string arrays should load");
+
+        let stored = serde_json::to_value(&choices).expect("choices should serialize");
+        assert_eq!(
+            stored,
+            json!([
+                {"value": "first", "label": "first"},
+                {"value": "second", "label": "Second"}
+            ])
+        );
+        assert_eq!(
+            serde_json::from_value::<Vec<Choice>>(stored).expect("canonical choices should reload"),
+            choices
+        );
+    }
+
+    #[test]
+    fn ask_request_rejects_non_choice_entries() {
+        for invalid_choice in [
+            json!(42),
+            json!(["nested"]),
+            json!({"value": "missing-label"}),
+            json!({"value": "x", "label": "X", "extra": true}),
+        ] {
+            let result = serde_json::from_value::<AskRequest>(json!({
+                "question": "Choose",
+                "question_type": "multichoice",
+                "choices": [invalid_choice]
+            }));
+            assert!(result.is_err(), "invalid choice entry should fail ingestion");
+        }
+    }
 }
