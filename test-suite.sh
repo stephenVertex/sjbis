@@ -232,10 +232,63 @@ ID11=$(ask --question "Pick a hotel for the Austin trip (Jun 12–14)." \
 ok "Hotel picker from Tripwise (id: $ID11)"
 rm "$HOTELS"
 
-# ── 12. Summary ──────────────────────────────────────────────────
+# ── 12. Yesod triage regression (urgency 1) ────────────────────
+echo ""
+echo "12. yesod-triage — Focus regression"
+echo "──────────────────────────────────────────────"
+
+TRIAGE_DETAIL=$(cat <<'EOF'
+# Triage review: yesod-triage
+
+> This card needs a disposition decision. Please review the linked evidence and pick one of the five choices.
+
+## Evidence
+
+- Link to related note: [ys-yes-24ho](note://ys-yes-24ho)
+- Link to another related note: [ys-ays-51x9](note://ys-ays-51x9)
+- Context from the mayor's run:
+  - The card was posted with plain-string choices.
+  - The dashboard blanked when the card was clicked.
+
+## Requested outcome
+
+Choose the disposition that should be recorded for the linked note.
+EOF
+)
+
+gap
+ID12=$(ask --question "How should ys-yes-24ho be dispositioned?" \
+    --choices '["Accept suggestion","Keep → plan it","Wontfix / obsolete","Duplicate","Needs discussion"]' \
+    --agent-name "yesod-triage" \
+    --instance "Mayor triage regression" \
+    --detail-markdown "$TRIAGE_DETAIL" \
+    --urgency 1 \
+    --id "triage-ys-yes-24ho" \
+    | python3 -c '
+import json
+import sys
+
+expected = [
+    "Accept suggestion",
+    "Keep → plan it",
+    "Wontfix / obsolete",
+    "Duplicate",
+    "Needs discussion",
+]
+notification = json.load(sys.stdin)
+choices = notification.get("choices") or []
+actual = [(choice.get("value"), choice.get("label")) for choice in choices]
+wanted = [(choice, choice) for choice in expected]
+if actual != wanted:
+    raise SystemExit(f"triage choice round-trip mismatch: {actual!r}")
+print(notification["id"])
+')
+ok "5-option yesod-triage regression from live server (id: $ID12)"
+
+# ── 13. Summary ──────────────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  Demo complete — 11 notifications seeded"
+echo "  Demo complete — 12 notifications seeded"
 echo "  Dashboard: $DASHBOARD"
 echo ""
 echo "  Try: click a card → answer → watch SSE update live"
