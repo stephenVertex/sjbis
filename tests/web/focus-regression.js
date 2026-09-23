@@ -129,19 +129,13 @@
     close() {}
   };
 
-  let focusImplementation;
-  Object.defineProperty(window, 'Focus', {
-    configurable: true,
-    get() {
-      return focusImplementation;
-    },
-    set(value) {
-      focusImplementation = function FocusRegressionProxy(props) {
-        if (props.n.id === CRASH_ID) throw new Error(FORCED_EXCEPTION);
-        return React.createElement(value, props);
-      };
-    },
-  });
+  function installFocusCrash() {
+    const focusImplementation = window.Focus;
+    window.Focus = function FocusRegressionProxy(props) {
+      if (props.n.id === CRASH_ID) throw new Error(FORCED_EXCEPTION);
+      return React.createElement(focusImplementation, props);
+    };
+  }
 
   function record(message, className) {
     const item = document.createElement('li');
@@ -197,6 +191,7 @@
   async function run() {
     document.getElementById('original-exception').textContent = ORIGINAL_EXCEPTION;
     await waitFor(() => document.querySelectorAll('.card').length === 3, 'controlled cards should render', 15000);
+    installFocusCrash();
     assert(document.querySelector('#root .app'), 'dashboard root remains mounted');
 
     cardForQuestion('How should ys-yes-24ho be dispositioned?').click();
