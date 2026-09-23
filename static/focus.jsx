@@ -15,22 +15,9 @@ const TYPE_LABEL = {
   form: 'Form',
 };
 
-// Convert "-00:01:42" to "1m 42s ago"
-function fmtSentAt(s) {
-  if (!s) return '';
-  if (s.includes('T')) {
-    // ISO date string from API
-    const d = new Date(s);
-    const now = new Date();
-    const diff = Math.floor((now - d) / 1000);
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return `${Math.floor(diff / 3600)}h ${Math.floor((diff % 3600) / 60)}m ago`;
-  }
-  const [h, m, sec] = s.replace('-', '').split(':').map(Number);
-  if (h) return `${h}h ${m}m ago`;
-  if (m) return `${m}m ${sec}s ago`;
-  return `${sec}s ago`;
+// Compatibility export for app.jsx until all consumers use SjbisTime directly.
+function fmtSentAt(value) {
+  return window.SjbisTime.formatAge(value);
 }
 
 // Normalize API snake_case fields to camelCase expected by renderers
@@ -932,7 +919,7 @@ function Focus({ n, onClose, onAnswer, onDismiss, onSnooze }) {
           <div className="glyph">{agent.glyph}</div>
           <div className="meta">
             <div className="label">
-              <strong>{nn.sender}</strong> via {agent.name} · {fmtSentAt(nn.sentAt)} · {TYPE_LABEL[nn.type] || nn.type}
+              <strong>{nn.sender}</strong> via {agent.name} · {window.SjbisTime.formatAge(nn.sentAt)} · {TYPE_LABEL[nn.type] || nn.type}
             </div>
             <div className="sender" style={{ marginTop: 2 }}>
               Urgency {nn.urgency}/5 · {nn.blocking ? 'Blocking' : 'Non-blocking'}

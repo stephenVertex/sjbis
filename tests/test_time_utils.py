@@ -3,6 +3,7 @@
 # ///
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -92,6 +93,22 @@ class TimeUtilitiesTest(unittest.TestCase):
     def test_direct_deploy_includes_plain_javascript_assets(self):
         deploy_script = (ROOT / "build-and-deploy.sh").read_text()
         self.assertIn("static/*.js static/*.jsx", deploy_script)
+
+    def test_focus_uses_shared_age_formatter_with_compatibility_delegate(self):
+        focus = (ROOT / "static" / "focus.jsx").read_text()
+        self.assertIn("sentAt: n.sentAt || n.created_at || ''", focus)
+        self.assertIn("{window.SjbisTime.formatAge(nn.sentAt)}", focus)
+
+        adapter = re.search(
+            r"function fmtSentAt\(value\) \{\s*(.*?)\s*\}",
+            focus,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(adapter)
+        self.assertEqual(
+            adapter.group(1),
+            "return window.SjbisTime.formatAge(value);",
+        )
 
 
 if __name__ == "__main__":
