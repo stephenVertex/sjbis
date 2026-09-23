@@ -30,6 +30,36 @@ struct Choice: Codable, Identifiable, Hashable {
     var id: String { value }
 }
 
+extension Choice {
+    private enum CodingKeys: String, CodingKey {
+        case value
+        case label
+        case hint
+    }
+
+    init(from decoder: Decoder) throws {
+        let singleValue = try decoder.singleValueContainer()
+        if let string = try? singleValue.decode(String.self) {
+            value = string
+            label = string
+            hint = nil
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        value = try container.decode(String.self, forKey: .value)
+        label = try container.decode(String.self, forKey: .label)
+        hint = try container.decodeIfPresent(String.self, forKey: .hint)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(value, forKey: .value)
+        try container.encode(label, forKey: .label)
+        try container.encodeIfPresent(hint, forKey: .hint)
+    }
+}
+
 struct DiffLine: Codable, Identifiable, Hashable {
     var kind: String
     var text: String
