@@ -32,11 +32,73 @@ const TYPE_ICONS = {
   form:        '▤',
 };
 
-// Global API helpers.
-// Include the directory the app is served from so the dashboard also works
-// behind a path-prefixed reverse proxy (e.g. https://host/sjbis/ → daemon).
-// At the daemon root (http://host:7878/) this is just the origin.
-const API_BASE = window.location.origin + window.location.pathname.replace(/(\/index\.html)?\/?$/, '');
+// Browser routes and API calls share one dashboard base so a card path never
+// becomes part of the REST or SSE URL when the app is mounted under a prefix.
+function normalizeDashboardBasePath(path) {
+  const trimmed = (path || '').replace(/\/+$/, '');
+  return trimmed === '/' ? '' : trimmed;
+}
+
+function deriveDashboardBasePath(pathname) {
+  const cardMarker = pathname.lastIndexOf('/card/');
+  if (cardMarker >= 0) return normalizeDashboardBasePath(pathname.slice(0, cardMarker));
+  return normalizeDashboardBasePath(pathname.replace(/\/index\.html$/, ''));
+}
+
+const DASHBOARD_BASE_PATH = normalizeDashboardBasePath(
+  window.__SJBIS_BASE_PATH__ !== undefined
+    ? window.__SJBIS_BASE_PATH__
+    : deriveDashboardBasePath(window.location.pathname)
+);
+
+function dashboardPath(suffix = '') {
+  const clean = suffix.replace(/^\/+/, '');
+  return clean ? `${DASHBOARD_BASE_PATH}/${clean}` : `${DASHBOARD_BASE_PATH}/`;
+}
+
+function cardPath(id) {
+  return dashboardPath(`card/${encodeURIComponent(String(id))}`);
+}
+
+function canonicalCardUrl(id) {
+  return new URL(cardPath(id), window.location.origin).href;
+}
+
+function notificationPath(id) {
+  return dashboardPath(`notification/${encodeURIComponent(String(id))}`);
+}
+
+function readBrowserRoute() {
+  const cardPrefix = dashboardPath('card/');
+  if (window.location.pathname.startsWith(cardPrefix)) {
+    const encodedId = window.location.pathname.slice(cardPrefix.length);
+    if (!encodedId || encodedId.includes('/')) {
+      return { kind: 'invalid-card', requestedId: encodedId };
+    }
+    try {
+      const id = decodeURIComponent(encodedId);
+      return id ? { kind: 'card', id, source: 'path' } : { kind: 'invalid-card', requestedId: encodedId };
+    } catch (_) {
+      return { kind: 'invalid-card', requestedId: encodedId };
+    }
+  }
+
+  const qId = new URLSearchParams(window.location.search).get('q_id');
+  return qId ? { kind: 'card', id: qId, source: 'alias' } : { kind: 'list' };
+}
+
+const API_BASE = window.location.origin + DASHBOARD_BASE_PATH;
+const CARD_HISTORY_KEY = '__sjbisCardRoute';
+
+function cardHistoryState(fromList) {
+  return { ...(window.history.state || {}), [CARD_HISTORY_KEY]: { fromList } };
+}
+
+function listHistoryState() {
+  const state = { ...(window.history.state || {}) };
+  delete state[CARD_HISTORY_KEY];
+  return state;
+}
 
 // Deduplicate a list of items by `id`, keeping the FIRST occurrence.
 // History is built newest-first, so the first occurrence is the freshest.
@@ -55,6 +117,17 @@ function dedupeById(items) {
 async function apiState() {
   const r = await fetch(`${API_BASE}/state`);
   if (!r.ok) throw new Error('failed to load state');
+  return r.json();
+}
+
+async function apiNotification(id, signal) {
+  const r = await fetch(new URL(notificationPath(id), window.location.origin), { signal });
+  if (r.status === 404) {
+    const error = new Error('card not found');
+    error.status = 404;
+    throw error;
+  }
+  if (!r.ok) throw new Error(`failed to load card (${r.status})`);
   return r.json();
 }
 
@@ -437,6 +510,54 @@ function LiveClock() {
   );
 }
 
+function CardRouteStatus({ state, onClose, onRetry }) {
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const loading = state.status === 'loading';
+  const notFound = state.status === 'not-found';
+  const title = loading ? 'Loading card…' : notFound ? 'Card not found' : 'Card could not be loaded';
+  const detail = loading
+    ? `Fetching ${state.id}`
+    : notFound
+      ? `No notification exists with the ID “${state.id || 'unknown'}”.`
+      : state.message || 'The daemon did not return this card.';
+
+  return (
+    <>
+      <div className="focus-backdrop" onClick={onClose} />
+      <div className="focus" role="dialog" aria-modal="true" aria-live="polite" style={{ '--agent': notFound ? 'var(--hot)' : 'var(--calm)' }}>
+        <div className="focus-hd">
+          <div className="glyph">{loading ? '↻' : notFound ? '?' : '!'}</div>
+          <div className="meta">
+            <div className="label"><strong>{title}</strong></div>
+            <div className="sender" style={{ marginTop: 2 }}>Stable card link</div>
+          </div>
+          <button className="close" onClick={onClose}>✕</button>
+        </div>
+        <div className="focus-body">
+          <h2 className="focus-q">{title}</h2>
+          <p className="focus-detail">{detail}</p>
+          {!loading && (
+            <div className="action-row">
+              <button className="btn-action ghost" onClick={onClose}>Back to cards</button>
+              {!notFound && <button className="btn-action primary" onClick={onRetry}>Try again</button>}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── App ────────────────────────────────────────────────────────────────
 
 function App() {
@@ -447,6 +568,14 @@ function App() {
   const [agents, setAgents] = React.useState({});
   const [filterAgent, setFilterAgent] = React.useState(null);
   const [focused, setFocused] = React.useState(null);
+  const [routeTarget, setRouteTarget] = React.useState(() => readBrowserRoute());
+  const [routeReload, setRouteReload] = React.useState(0);
+  const [focusLoad, setFocusLoad] = React.useState(() => {
+    const route = readBrowserRoute();
+    return route.kind === 'list'
+      ? { status: 'idle' }
+      : { status: 'loading', id: route.id || route.requestedId };
+  });
   const [burst, setBurst] = React.useState(null);
   const [selectedIdx, setSelectedIdx] = React.useState(0);
   const [historyHidden, setHistoryHidden] = React.useState(
@@ -462,12 +591,7 @@ function App() {
   // duplicate notification_answered events (reconnects, replays) don't reset
   // the linger timer or re-inject the card — which caused UI flicker.
   const resolvingRef = React.useRef(new Set());
-
-  // Parse ?q_id=... from URL for deep-linking to a notification
-  const urlQId = React.useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('q_id');
-  }, []);
+  const activeRouteIdRef = React.useRef(null);
 
   // Load initial state
   React.useEffect(() => {
@@ -479,26 +603,72 @@ function App() {
         setAgents(state.agents || {});
         if (state.version) setVersion(state.version);
         window.AGENTS = state.agents || {};
-
-        // Deep-link: if q_id is in URL, focus that notification
-        if (urlQId) {
-          const n = (state.notifications || []).find((x) => x.id === urlQId);
-          if (n) setFocused(n);
-        }
       })
       .catch((e) => console.error('Failed to load state:', e));
-  }, [urlQId]);
+  }, []);
 
-  // Sync focused notification to URL (replaceState so back button closes it)
+  // Browser Back and Forward are route changes just like card clicks.
   React.useEffect(() => {
-    const url = new URL(window.location);
-    if (focused) {
-      url.searchParams.set('q_id', focused.id);
-    } else {
-      url.searchParams.delete('q_id');
+    const onPopState = () => setRouteTarget(readBrowserRoute());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Resolve every routed card directly so terminal and historical cards do
+  // not depend on the open-notification array returned by /state.
+  React.useEffect(() => {
+    if (routeTarget.kind === 'list') {
+      activeRouteIdRef.current = null;
+      setFocused(null);
+      setFocusLoad({ status: 'idle' });
+      return undefined;
     }
-    window.history.replaceState({}, '', url);
-  }, [focused]);
+
+    if (routeTarget.kind === 'invalid-card') {
+      activeRouteIdRef.current = null;
+      setFocused(null);
+      setFocusLoad({ status: 'not-found', id: routeTarget.requestedId });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let cancelled = false;
+    activeRouteIdRef.current = routeTarget.id;
+    setFocused(null);
+    setFocusLoad({ status: 'loading', id: routeTarget.id });
+
+    apiNotification(routeTarget.id, controller.signal)
+      .then((notification) => {
+        if (cancelled) return;
+        setFocused(notification);
+        setFocusLoad({ status: 'ready', id: notification.id });
+        activeRouteIdRef.current = notification.id;
+
+        const canonicalUrl = canonicalCardUrl(notification.id);
+        const canonicalPath = new URL(canonicalUrl).pathname;
+        const needsCanonicalPath = routeTarget.source === 'alias'
+          || window.location.pathname !== canonicalPath
+          || new URLSearchParams(window.location.search).has('q_id');
+        if (needsCanonicalPath) {
+          const state = routeTarget.source === 'alias'
+            ? cardHistoryState(false)
+            : window.history.state;
+          window.history.replaceState(state, '', canonicalUrl);
+        }
+      })
+      .catch((error) => {
+        if (cancelled || error.name === 'AbortError') return;
+        setFocused(null);
+        setFocusLoad(error.status === 404
+          ? { status: 'not-found', id: routeTarget.id }
+          : { status: 'error', id: routeTarget.id, message: error.message });
+      });
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [routeTarget, routeReload]);
 
   // SSE connection
   React.useEffect(() => {
@@ -509,6 +679,9 @@ function App() {
       try {
         const event = JSON.parse(e.data);
         if (!event.event) return;
+        const refreshRoutedCard = (id) => {
+          if (activeRouteIdRef.current === id) setRouteReload((value) => value + 1);
+        };
         switch (event.event) {
           case 'notification_created':
             setNotifications((prev) => {
@@ -525,11 +698,10 @@ function App() {
             if (snoozeUntil > now) {
               // Notification was snoozed — remove it from the active list
               setNotifications((prev) => prev.filter((n) => n.id !== event.notification.id));
-              // Also clear focus if this was the focused notification
-              setFocused((f) => (f && f.id === event.notification.id) ? null : f);
             } else {
               setNotifications((prev) => prev.map((n) => n.id === event.notification.id ? event.notification : n));
             }
+            refreshRoutedCard(event.notification.id);
             break;
           }
           case 'notification_answered': {
@@ -574,7 +746,9 @@ function App() {
             // Remove it after the resolution has been visible.
             setTimeout(() => {
               setNotifications((prev) => prev.filter((n) => n.id !== answered.id));
-              setFocused((f) => (f && f.id === answered.id) ? null : f);
+              setFocused((f) => (
+                f && f.id === answered.id && activeRouteIdRef.current !== answered.id ? null : f
+              ));
               resolvingRef.current.delete(answered.id);
             }, lingerMs);
             // Add to history immediately.
@@ -582,14 +756,16 @@ function App() {
               { id: answered.id, agent_name: answered.src, question: answered.question || '', answer: answered.answer, answered_at: answered.answered_at, type: answered.renderer, note: answered.note },
               ...prev,
             ]));
+            refreshRoutedCard(answered.id);
             break;
           }
           case 'notification_cancelled':
             setNotifications((prev) => prev.filter((n) => n.id !== event.id));
+            refreshRoutedCard(event.id);
             break;
           case 'notification_dismissed':
             setNotifications((prev) => prev.filter((n) => n.id !== event.id));
-            setFocused((f) => (f && f.id === event.id) ? null : f);
+            refreshRoutedCard(event.id);
             break;
           case 'rule_created':
             setRules((prev) => [event.rule, ...prev]);
@@ -670,6 +846,28 @@ function App() {
     [notifications, filterAgent]
   );
 
+  const openCard = React.useCallback((id) => {
+    window.history.pushState(cardHistoryState(true), '', cardPath(id));
+    setRouteTarget(readBrowserRoute());
+  }, []);
+
+  const closeCard = React.useCallback(() => {
+    activeRouteIdRef.current = null;
+    setFocused(null);
+    setFocusLoad({ status: 'idle' });
+    const cameFromList = window.history.state?.[CARD_HISTORY_KEY]?.fromList === true;
+    if (cameFromList) {
+      window.history.back();
+    } else {
+      window.history.replaceState(listHistoryState(), '', dashboardPath());
+      setRouteTarget({ kind: 'list' });
+    }
+  }, []);
+
+  const retryCard = React.useCallback(() => {
+    setRouteReload((value) => value + 1);
+  }, []);
+
   // Keep selection in bounds
   React.useEffect(() => {
     if (visible.length === 0) return;
@@ -684,7 +882,7 @@ function App() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
     };
     const onKey = (e) => {
-      if (focused) return;
+      if (focused || focusLoad.status !== 'idle') return;
       if (isTyping(e.target)) return;
       // Toggle history sidebar (works even with no open cards)
       if (e.key.toLowerCase() === 'h') {
@@ -709,7 +907,7 @@ function App() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const n = visible[selectedIdx];
-        if (n) setFocused(n);
+        if (n) openCard(n.id);
       } else if (key === 't') {
         e.preventDefault();
         window.postMessage({ type: '__activate_edit_mode' }, '*');
@@ -717,7 +915,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [visible, selectedIdx, focused]);
+  }, [visible, selectedIdx, focused, focusLoad.status, openCard]);
 
   // Scroll selected card into view
   React.useEffect(() => {
@@ -752,7 +950,7 @@ function App() {
           ...prev,
         ]));
       }
-      setFocused(null);
+      closeCard();
       if (!isSkip) {
         setBurst({
           text: (n.question_type || n.type) === 'ack' ? 'noted' : 'sent',
@@ -770,7 +968,7 @@ function App() {
     try {
       await apiDismiss(n.id);
       setNotifications((prev) => prev.filter((x) => x.id !== n.id));
-      setFocused(null);
+      closeCard();
       setBurst({ text: 'dismissed', color: 'var(--ink-3)' });
     } catch (e) {
       console.error('Failed to dismiss:', e);
@@ -833,7 +1031,7 @@ function App() {
                 agents={agents}
                 selected={i === selectedIdx}
                 cardRef={(el) => { cardRefs.current[n.id] = el; }}
-                onClick={() => { setSelectedIdx(i); setFocused(n); }}
+                onClick={() => { setSelectedIdx(i); openCard(n.id); }}
                 onDismiss={async (id) => {
                   try {
                     await apiDismiss(id);
@@ -878,11 +1076,14 @@ function App() {
       </div>
 
       {focused && (
-        <window.Focus n={focused} onClose={() => setFocused(null)} onAnswer={onAnswer} onDismiss={onDismiss} onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(() => { setFocused(null); }).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })} />
+        <window.Focus n={focused} onClose={closeCard} onAnswer={onAnswer} onDismiss={onDismiss} onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(closeCard).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })} />
+      )}
+      {!focused && ['loading', 'not-found', 'error'].includes(focusLoad.status) && (
+        <CardRouteStatus state={focusLoad} onClose={closeCard} onRetry={retryCard} />
       )}
       {burst && <window.Burst text={burst.text} color={burst.color} onDone={() => setBurst(null)} />}
 
-      {!focused && visible.length > 0 && (
+      {!focused && focusLoad.status === 'idle' && visible.length > 0 && (
         <div className="kbd-help" aria-hidden="true">
           <span className="grp"><kbd>J</kbd><kbd>K</kbd> navigate</span>
           <span className="grp"><kbd>↵</kbd> open</span>
