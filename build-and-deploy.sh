@@ -52,7 +52,7 @@ ok "built ${BIN} ($(du -h "$BIN" | awk '{print $1}'))"
 # ── 3. Copy binary + static assets to dertog ────────────────────────────
 bold "3/5  Deploy to ${REMOTE_HOST}"
 scp -q "$BIN" "${REMOTE_HOST}:${REMOTE_DIR}/sjbis.new" || die "scp binary failed"
-scp -q static/*.jsx static/*.css static/*.html "${REMOTE_HOST}:${REMOTE_DIR}/static/" \
+scp -q static/*.js static/*.jsx static/*.css static/*.html "${REMOTE_HOST}:${REMOTE_DIR}/static/" \
   || die "scp static assets failed"
 ssh "$REMOTE_HOST" "mv ${REMOTE_DIR}/sjbis ${REMOTE_DIR}/sjbis.bak 2>/dev/null; \
   mv ${REMOTE_DIR}/sjbis.new ${REMOTE_DIR}/sjbis && chmod +x ${REMOTE_DIR}/sjbis" \
