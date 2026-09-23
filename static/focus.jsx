@@ -860,7 +860,7 @@ function SnoozePicker({ n, onSnooze, onClose }) {
 
 // ── Focus shell ─────────────────────────────────────────────────────────
 
-function Focus({ n, onClose, onAnswer, onDismiss, onSnooze }) {
+function Focus({ n, nowMs, onClose, onAnswer, onDismiss, onSnooze }) {
   const nn = normalizeNotif(n);
   const agent = window.AGENTS ? (window.AGENTS[nn.agent] || { glyph: '◐', name: nn.agent }) : { glyph: '◐', name: nn.agent };
   const Renderer = RENDERERS[nn.type] || AckRenderer;
@@ -919,7 +919,7 @@ function Focus({ n, onClose, onAnswer, onDismiss, onSnooze }) {
           <div className="glyph">{agent.glyph}</div>
           <div className="meta">
             <div className="label">
-              <strong>{nn.sender}</strong> via {agent.name} · {window.SjbisTime.formatAge(nn.sentAt)} · {TYPE_LABEL[nn.type] || nn.type}
+              <strong>{nn.sender}</strong> via {agent.name} · {window.SjbisTime.formatAge(nn.sentAt, { nowMs })} · {TYPE_LABEL[nn.type] || nn.type}
             </div>
             <div className="sender" style={{ marginTop: 2 }}>
               Urgency {nn.urgency}/5 · {nn.blocking ? 'Blocking' : 'Non-blocking'}

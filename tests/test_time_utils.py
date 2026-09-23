@@ -97,7 +97,8 @@ class TimeUtilitiesTest(unittest.TestCase):
     def test_focus_uses_shared_age_formatter_with_compatibility_delegate(self):
         focus = (ROOT / "static" / "focus.jsx").read_text()
         self.assertIn("sentAt: n.sentAt || n.created_at || ''", focus)
-        self.assertIn("{window.SjbisTime.formatAge(nn.sentAt)}", focus)
+        self.assertIn("function Focus({ n, nowMs,", focus)
+        self.assertIn("{window.SjbisTime.formatAge(nn.sentAt, { nowMs })}", focus)
 
         adapter = re.search(
             r"function fmtSentAt\(value\) \{\s*(.*?)\s*\}",
@@ -109,6 +110,51 @@ class TimeUtilitiesTest(unittest.TestCase):
             adapter.group(1),
             "return window.SjbisTime.formatAge(value);",
         )
+
+    def test_dashboard_history_uses_pacific_time_and_live_age(self):
+        app = (ROOT / "static" / "app.jsx").read_text()
+        self.assertIn(
+            "const timestamp = item.answered_at != null ? item.answered_at : item.created_at;",
+            app,
+        )
+        self.assertIn(
+            "const absolute = window.SjbisTime.formatPacificDateTime(timestamp);",
+            app,
+        )
+        self.assertIn(
+            'if (!absolute) return <div className="h-when">just now</div>;',
+            app,
+        )
+        self.assertIn('className="h-when" title={absolute}', app)
+        self.assertIn(
+            "window.SjbisTime.formatAge(timestamp, { nowMs })",
+            app,
+        )
+
+    def test_dashboard_shares_one_tick_across_age_consumers(self):
+        app = (ROOT / "static" / "app.jsx").read_text()
+        self.assertIn(
+            "const [nowMs, setNowMs] = React.useState(() => Date.now());",
+            app,
+        )
+        self.assertIn(
+            "const id = setInterval(() => setNowMs(Date.now()), 1000);",
+            app,
+        )
+        for consumer in (
+            "<LiveClock nowMs={nowMs} />",
+            "<HistoryTimestamp item={h} nowMs={nowMs} />",
+            "nowMs={nowMs}",
+        ):
+            self.assertIn(consumer, app)
+
+        live_clock = re.search(
+            r"function LiveClock\(\{ nowMs \}\) \{(.*?)\n\}",
+            app,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(live_clock)
+        self.assertNotIn("setInterval", live_clock.group(1))
 
 
 if __name__ == "__main__":
