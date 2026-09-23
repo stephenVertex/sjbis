@@ -31,6 +31,9 @@ flate2 = "1.0"
 tar = "0.4"
 jsonwebtoken = "9"
 
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+
 [profile.release]
 opt-level = 3
 lto = true

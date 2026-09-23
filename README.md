@@ -57,6 +57,8 @@ SJBIS is a **client/server split**, even though it's one binary:
 The two talk over plain HTTP/JSON. Point the client at the daemon by setting a
 URL in `~/.config/sjbis/daemon.toml` (or the `SJBIS_DAEMON` env var); otherwise
 it defaults to `http://localhost:7878` — handy if you run the daemon locally.
+Use the daemon's complete base URL, including a path prefix such as `/sjbis`
+when one is configured.
 
 ```toml
 # ~/.config/sjbis/daemon.toml  (on the client)
@@ -190,6 +192,102 @@ curl http://your-daemon-host:7878/health   # → "ok"
 > configurable via `SJBIS_REMOTE_HOST` / `SJBIS_REMOTE_URL` env vars (defaults
 > target the reference `dertog` deployment).
 
+## Stable card links and path prefixes
+
+### Canonical card URLs
+
+Every notification has a stable browser URL of the form
+`{dashboard-base}/card/{id}` for mail, chat, agent, bookmark, and copy-link
+consumers. For example:
+
+```text
+http://your-daemon-host:7878/card/sjbis-AbCdEfGh
+https://dertog.tailb4b58.ts.net/sjbis/card/sjbis-AbCdEfGh
+```
+
+Opening a card from the list pushes its canonical URL into browser history; the
+Back and Forward buttons move between the list and card views. Reloading the
+URL opens the same card directly. The Focus view's copy-link control copies the
+absolute canonical URL, including the dashboard's configured path prefix.
+
+The older `{dashboard-base}/?q_id={id}` form remains supported as an alias. Once
+an existing card loads, the browser replaces the alias with its canonical
+`/card/{id}` URL. Direct links work for open cards and for every terminal
+status: `answered`, `cancelled`, `muted`, `timed_out` (deadline-expired), and
+`dismissed`. Terminal cards open read-only. An unknown ID shows a clear
+**Card not found** state rather than silently returning to the list.
+
+Card URLs are a browser routing feature, not a producer schema change. In
+particular, `Notification` responses do **not** gain a `card_url` field:
+
+- Browser sharing combines `window.location.origin`, the dashboard base path,
+  and the notification `id`.
+- Mail, chat, and agent integrations combine their configured public dashboard
+  base (for example `https://dertog.tailb4b58.ts.net/sjbis`) with
+  `/card/{id}`. The existing notification `id` returned by `POST /ask` is all
+  they need.
+- Existing web list consumers keep reading `notifications`, `history`, `rules`,
+  `agents`, and `version` from `GET /state`. Card rendering continues to use
+  existing notification fields for identity and source, question and type,
+  urgency, choices, deadline, status, and timestamps.
+- SSE payloads are unchanged: events retain their event-specific
+  `notification`, `envelope`, `rule`, or `id` fields.
+- `sjbis status` still consumes `id`, `status`, `agent_name`, `question`,
+  `answer`, `note`, and `answered_at`. The native iOS client still decodes the
+  existing full `SjbisNotification` and `DashboardState` models. Neither client
+  needs a schema migration.
+
+The original [`SJBIS Architecture.html`](SJBIS%20Architecture.html) reference
+and the native UI under `ios/` are intentionally outside this web-routing
+change. These browser URLs do not add iOS Universal Links, alter the producer
+wire format, or configure a reverse proxy.
+
+### Serving the dashboard below `/sjbis`
+
+Start the daemon with an explicit base path when a reverse proxy exposes SJBIS
+below a prefix:
+
+```bash
+sjbis daemon start --port 7878 --base-path /sjbis
+```
+
+This mounts the dashboard, static assets, REST API, SSE stream, and health check
+below the same prefix; for example, the health endpoint becomes
+`http://127.0.0.1:7878/sjbis/health`. The default base path remains `/`.
+
+The reverse proxy must preserve the prefix all the way to the application. In
+other words, an external request for `/sjbis/card/{id}` must reach the daemon as
+`/sjbis/card/{id}`, not `/card/{id}`. Configure CLI and native clients with the
+complete prefixed daemon URL as well:
+
+```toml
+# ~/.config/sjbis/daemon.toml
+url = "https://dertog.tailb4b58.ts.net/sjbis"
+```
+
+```bash
+export SJBIS_DAEMON=https://dertog.tailb4b58.ts.net/sjbis
+sjbis list
+```
+
+Tailscale Serve configuration is deliberately deferred. The exact follow-up
+for the reference tailnet host is:
+
+1. Change the service command to
+   `sjbis daemon start --port 7878 --base-path /sjbis` and restart it.
+2. On that host, confirm the installed Tailscale version supports these flags,
+   then run:
+
+   ```bash
+   tailscale serve --bg --https=443 --set-path=/sjbis http://127.0.0.1:7878/sjbis
+   ```
+
+3. Verify `https://dertog.tailb4b58.ts.net/sjbis/health`, then open and reload
+   `https://dertog.tailb4b58.ts.net/sjbis/card/{existing-id}`.
+
+No Tailscale Serve state or other deployment infrastructure is changed by this
+repository update.
+
 ## Architecture
 
 ```
@@ -272,7 +370,7 @@ The `sjbis` binary is both the client (talks to the daemon) and the daemon itsel
 | `sjbis ask …` | Post a question. Returns an id immediately; blocks for an answer with `--blocking`. |
 | `sjbis answer <id> --answer <v>` | Record an answer on behalf of the caller (e.g. an agent's auto-pick after a timeout). Supports `--via` and `--note`. |
 | `sjbis wait <id>` | Reattach to a posted question and block until it resolves. |
-| `sjbis status <id>` | Print a notification's state (open / answered / cancelled / timed_out / dismissed). |
+| `sjbis status <id>` | Print a notification's state (open / answered / cancelled / muted / timed_out / dismissed). |
 | `sjbis list [--json]` | List open notifications. |
 | `sjbis cancel <id>` | Withdraw an unanswered question. |
 | `sjbis dismiss <id>` | Mark as seen without answering; no reply sent. |
@@ -281,7 +379,7 @@ The `sjbis` binary is both the client (talks to the daemon) and the daemon itsel
 | `sjbis register --agent-name <n>` | Register an agent identity (name + optional glyph/color). |
 | `sjbis prime` | Print the agent primer (working agreement, question types, daemon status). |
 | `sjbis upgrade` | Self-update from GitHub Releases (see [Upgrading](#upgrading)). |
-| `sjbis daemon start\|stop\|status` | Daemon lifecycle. `start --port 7878 [--background]`. |
+| `sjbis daemon start\|stop\|status` | Daemon lifecycle. `start --port 7878 [--base-path /sjbis] [--background]`. |
 
 Run `sjbis prime` first when wiring up a new agent — it prints the live daemon
 status and the exact pattern to follow.
@@ -350,7 +448,8 @@ context there.
 > The examples below use `http://localhost:7878` for brevity. From a **client**,
 > substitute your daemon's URL (the reference deployment uses
 > `http://192.168.0.138:7878`), or set `SJBIS_DAEMON` /
-> `~/.config/sjbis/daemon.toml` so the `sjbis` CLI uses it automatically.
+> `~/.config/sjbis/daemon.toml` so the `sjbis` CLI uses it automatically. Include
+> the configured base path, for example `https://host.example/sjbis`.
 
 ### POST /ask — create a notification
 
@@ -410,6 +509,8 @@ Points the `sjbis` CLI at the daemon. Set this to your daemon host's URL:
 
 ```toml
 url = "http://your-daemon-host:7878"
+# With `sjbis daemon start --base-path /sjbis`:
+# url = "https://your-daemon-host/sjbis"
 ```
 
 ### `~/.config/sjbis/database.toml` (daemon host)
@@ -542,7 +643,7 @@ git tag v0.1.3 && git push origin v0.1.3
 
 | Variable | Purpose |
 |---|---|
-| `SJBIS_DAEMON` | Daemon URL the CLI talks to. Defaults to `http://localhost:7878`. Set this (or `~/.config/sjbis/daemon.toml`) to point at a remote daemon host. |
+| `SJBIS_DAEMON` | Complete daemon base URL the CLI talks to, including any configured path prefix. Defaults to `http://localhost:7878`. Set this (or `~/.config/sjbis/daemon.toml`) to point at a remote daemon host. |
 | `FIREWORKS_API_KEY` | Enable AI-powered rule compilation and renderer guessing |
 
 ## Troubleshooting

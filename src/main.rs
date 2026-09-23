@@ -577,10 +577,15 @@ async fn cmd_rule(command: cli::RuleCommands) -> Result<()> {
 
 /// Spawn a detached background daemon process on the given port.
 /// Writes the pidfile and returns the child pid.
-fn spawn_background_daemon(port: u16) -> Result<u32> {
+fn spawn_background_daemon(port: u16, base_path: &daemon::BasePath) -> Result<u32> {
     let exe = std::env::current_exe()?;
     let mut cmd = std::process::Command::new(exe);
-    cmd.arg("daemon").arg("start").arg("--port").arg(port.to_string());
+    cmd.arg("daemon")
+        .arg("start")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--base-path")
+        .arg(base_path.as_str());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
     #[cfg(unix)]
@@ -596,15 +601,15 @@ fn spawn_background_daemon(port: u16) -> Result<u32> {
 
 async fn cmd_daemon(command: cli::DaemonCommands) -> Result<()> {
     match command {
-        cli::DaemonCommands::Start { port, background } => {
+        cli::DaemonCommands::Start { port, base_path, background } => {
             if background {
-                let pid = spawn_background_daemon(port)?;
-                println!("Daemon started on port {} (pid {})", port, pid);
+                let pid = spawn_background_daemon(port, &base_path)?;
+                println!("Daemon started on port {} at {} (pid {})", port, base_path, pid);
             } else {
                 // Run inline
                 let api_key = std::env::var("FIREWORKS_API_KEY").ok();
-                println!("Starting daemon on port {}...", port);
-                daemon::run_daemon(port, api_key).await?;
+                println!("Starting daemon on port {} at {}...", port, base_path);
+                daemon::run_daemon(port, api_key, base_path).await?;
             }
         }
         cli::DaemonCommands::Stop => {
@@ -671,7 +676,7 @@ async fn cmd_prime() -> Result<()> {
     let mut autostart_note = String::new();
     if !daemon_ok && is_local {
         let port = url.rsplit(':').next().and_then(|s| s.trim_end_matches('/').parse::<u16>().ok()).unwrap_or(7878);
-        match spawn_background_daemon(port) {
+        match spawn_background_daemon(port, &daemon::BasePath::default()) {
             Ok(pid) => {
                 // Give it a moment to bind and run migrations.
                 for _ in 0..10 {

@@ -2,11 +2,28 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=1440" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <meta http-equiv="Pragma" content="no-cache" />
 <meta http-equiv="Expires" content="0" />
 <title>SJBIS · Information Surfacer</title>
+
+<script>
+// Establish the dashboard root before the browser resolves relative assets.
+(function() {
+  var pathname = window.location.pathname;
+  var cardMarker = pathname.lastIndexOf('/card/');
+  var basePath = cardMarker >= 0
+    ? pathname.slice(0, cardMarker)
+    : pathname.replace(/\/index\.html$/, '').replace(/\/+$/, '');
+  if (basePath === '/') basePath = '';
+  window.__SJBIS_BASE_PATH__ = basePath;
+
+  var base = document.createElement('base');
+  base.href = (basePath || '') + '/';
+  document.head.appendChild(base);
+})();
+</script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
