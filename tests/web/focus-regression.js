@@ -13,6 +13,10 @@
     'Duplicate',
     'Needs discussion',
   ];
+  const CANONICALIZED_PLAIN_CHOICES = PLAIN_CHOICES.map((choice) => ({
+    value: choice,
+    label: choice,
+  }));
   const MARKDOWN = [
     '# Triage review: yesod-triage',
     '',
@@ -37,7 +41,7 @@
       question: 'How should ys-yes-24ho be dispositioned?',
       detail_markdown: MARKDOWN,
       question_type: 'multichoice',
-      choices: PLAIN_CHOICES,
+      choices: CANONICALIZED_PLAIN_CHOICES,
       urgency: 3,
       blocking: false,
       created_at: '2026-09-22T18:32:20Z',
@@ -72,6 +76,7 @@
 
   const harness = {
     answers: [],
+    expectedErrors: [],
     failures: [],
     passes: [],
     uncaught: [],
@@ -79,12 +84,14 @@
   window.__focusRegression = harness;
   localStorage.removeItem('sjbis.historyHidden');
 
-  window.addEventListener('error', (event) => {
-    harness.uncaught.push(event.error || event.message);
-  });
-  window.addEventListener('unhandledrejection', (event) => {
-    harness.uncaught.push(event.reason);
-  });
+  function captureBrowserError(error) {
+    const message = String(error);
+    if (message.includes(FORCED_EXCEPTION)) harness.expectedErrors.push(message);
+    else harness.uncaught.push(error);
+  }
+
+  window.addEventListener('error', (event) => captureBrowserError(event.error || event.message));
+  window.addEventListener('unhandledrejection', (event) => captureBrowserError(event.reason));
 
   const response = (body, status) => new Response(JSON.stringify(body), {
     status: status || 200,
@@ -194,11 +201,16 @@
     installFocusCrash();
     assert(document.querySelector('#root .app'), 'dashboard root remains mounted');
 
+    const plainNotification = notifications.find((notification) => notification.id === PLAIN_ID);
+    // The live CLI path returns canonical objects; swap in the legacy wire form
+    // immediately before Focus opens to exercise its defensive string decoder.
+    plainNotification.choices = PLAIN_CHOICES;
     cardForQuestion('How should ys-yes-24ho be dispositioned?').click();
     await waitFor(() => document.querySelector('.focus'), 'plain-string Focus should open');
     assert(JSON.stringify(choiceLabels()) === JSON.stringify(PLAIN_CHOICES), 'plain-string payload renders all five labels in order');
     assert(document.querySelectorAll('.focus .md-detail a').length === 2, 'long markdown renders both note-id links');
     assert(harness.uncaught.length === 0, 'plain-string Focus produces no uncaught browser error');
+    plainNotification.choices = CANONICALIZED_PLAIN_CHOICES;
     await closeFocus();
 
     cardForQuestion('Which canonical action should be submitted?').click();
@@ -217,6 +229,8 @@
     const fallback = await waitFor(() => document.querySelector('.focus-error[role="alert"]'), 'error fallback should render');
     assert(fallback.textContent.includes(CRASH_ID), 'error fallback includes the card id');
     assert(fallback.textContent.includes(FORCED_EXCEPTION), 'error fallback includes the render exception');
+    assert(harness.expectedErrors.length > 0, 'browser reports only the deliberately forced render exception');
+    assert(harness.uncaught.length === 0, 'forced render containment produces no unrelated uncaught error');
     assert(document.querySelector('#root .app'), 'forced Focus error does not unmount the dashboard');
     fallback.querySelector('.focus-error-copy button').click();
     await waitFor(() => !document.querySelector('.focus-error'), 'fallback Close should return to the list');
