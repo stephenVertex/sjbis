@@ -1076,7 +1076,14 @@ function App() {
       </div>
 
       {focused && (
-        <window.Focus n={focused} onClose={closeCard} onAnswer={onAnswer} onDismiss={onDismiss} onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(closeCard).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })} />
+        <window.Focus
+          n={focused}
+          canonicalUrl={canonicalCardUrl(focused.id)}
+          onClose={closeCard}
+          onAnswer={onAnswer}
+          onDismiss={onDismiss}
+          onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(closeCard).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })}
+        />
       )}
       {!focused && ['loading', 'not-found', 'error'].includes(focusLoad.status) && (
         <CardRouteStatus state={focusLoad} onClose={closeCard} onRetry={retryCard} />
@@ -1093,9 +1100,15 @@ function App() {
       )}
       {focused && (
         <div className="kbd-help" aria-hidden="true">
-          <span className="grp"><kbd>d</kbd> dismiss</span>
-          <span className="grp"><kbd>s</kbd> snooze</span>
-          <span className="grp"><kbd>⇧N</kbd> note</span>
+          {(focused.status || 'open') === 'open' ? (
+            <>
+              <span className="grp"><kbd>d</kbd> dismiss</span>
+              <span className="grp"><kbd>s</kbd> snooze</span>
+              <span className="grp"><kbd>⇧N</kbd> note</span>
+            </>
+          ) : (
+            <span className="grp">Read only</span>
+          )}
           <span className="grp"><kbd>esc</kbd> back</span>
         </div>
       )}
