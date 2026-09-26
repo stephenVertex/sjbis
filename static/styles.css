@@ -743,6 +743,14 @@ button { font-family: inherit; }
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--agent);
 }
+.h-item .h-when {
+  margin: 0 0 6px 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--ink-4);
+}
+.h-item .h-age { color: var(--ink-3); }
 .h-item .h-q {
   font-size: 13px;
   color: var(--ink-2);

@@ -289,7 +289,7 @@ function CardCountdown({ deadline }) {
   );
 }
 
-function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef }) {
+function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef, nowMs }) {
   const agent = agents[n.agent_name] || agents[n.agent] || { glyph: '◐', name: n.agent_name || n.agent };
   const color = window.agentColor(n.agent_name || n.agent);
   const resolved = n._resolved;
@@ -364,7 +364,7 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef }) 
         </div>
         {n.deadline
           ? <CardCountdown deadline={n.deadline} />
-          : <div className="deadline">{window.fmtSentAt(n.sentAt || n.created_at)}</div>}
+          : <div className="deadline">{window.SjbisTime.formatAge(n.sentAt || n.created_at, { nowMs })}</div>}
       </div>
     </div>
   );
@@ -464,7 +464,21 @@ function CommandBar({ onAddRule }) {
   );
 }
 
-function History({ items, onReplay, onHide }) {
+function HistoryTimestamp({ item, nowMs }) {
+  const timestamp = item.answered_at != null ? item.answered_at : item.created_at;
+  const absolute = window.SjbisTime.formatPacificDateTime(timestamp);
+  if (!absolute) return <div className="h-when">just now</div>;
+
+  return (
+    <div className="h-when" title={absolute}>
+      <time dateTime={window.SjbisTime.toIsoTimestamp(timestamp)}>{absolute}</time>
+      {' · '}
+      <span className="h-age">{window.SjbisTime.formatAge(timestamp, { nowMs })}</span>
+    </div>
+  );
+}
+
+function History({ items, onReplay, onHide, nowMs }) {
   return (
     <div className="history">
       <div className="history-hd">
@@ -479,8 +493,8 @@ function History({ items, onReplay, onHide }) {
           <div className="h-top">
             <span className="dotc" />
             <span>{(window.AGENTS && window.AGENTS[h.agent_name || h.agent]?.name) || h.agent_name || h.agent}</span>
-            <span style={{ marginLeft: 'auto' }}>{h.answered_at ? new Date(h.answered_at).toLocaleTimeString() : 'just now'}</span>
           </div>
+          <HistoryTimestamp item={h} nowMs={nowMs} />
           <div className="h-q">{h.question}</div>
           <div className="h-a">
             {h.answer}
@@ -493,12 +507,8 @@ function History({ items, onReplay, onHide }) {
 }
 
 // Live clock
-function LiveClock() {
-  const [now, setNow] = React.useState(new Date());
-  React.useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
+function LiveClock({ nowMs }) {
+  const now = new Date(nowMs);
   const hh = String(now.getHours()).padStart(2, '0');
   const mm = String(now.getMinutes()).padStart(2, '0');
   const ss = String(now.getSeconds()).padStart(2, '0');
@@ -609,6 +619,7 @@ class FocusErrorBoundary extends React.Component {
 
 function App() {
   const [t, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
   const [notifications, setNotifications] = React.useState([]);
   const [history, setHistory] = React.useState([]);
   const [rules, setRules] = React.useState([]);
@@ -639,6 +650,11 @@ function App() {
   // the linger timer or re-inject the card — which caused UI flicker.
   const resolvingRef = React.useRef(new Set());
   const activeRouteIdRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Load initial state
   React.useEffect(() => {
@@ -1041,7 +1057,7 @@ function App() {
             <span className="sub">information surfacer{version ? ` · ${version}` : ' · v0.1'}{connected ? '' : ' · offline'}</span>
           </div>
           <CommandBar onAddRule={apiAddRule} />
-          <LiveClock />
+          <LiveClock nowMs={nowMs} />
           <button
             className="settings-btn"
             title="Settings (T)"
@@ -1077,6 +1093,7 @@ function App() {
                 n={n}
                 agents={agents}
                 selected={i === selectedIdx}
+                nowMs={nowMs}
                 cardRef={(el) => { cardRefs.current[n.id] = el; }}
                 onClick={() => { setSelectedIdx(i); openCard(n.id); }}
                 onDismiss={async (id) => {
@@ -1107,6 +1124,7 @@ function App() {
         {!historyHidden && (
           <History
             items={history}
+            nowMs={nowMs}
             onReplay={() => setBurst({ text: 'replay queued', color: 'var(--calm)' })}
             onHide={() => setHistoryHidden(true)}
           />
@@ -1126,6 +1144,7 @@ function App() {
         <FocusErrorBoundary key={focused.id} notification={focused} onClose={closeCard}>
           <window.Focus
             n={focused}
+            nowMs={nowMs}
             canonicalUrl={canonicalCardUrl(focused.id)}
             onClose={closeCard}
             onAnswer={onAnswer}

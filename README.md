@@ -128,7 +128,7 @@ ssh "$HOST" 'mkdir -p ~/sjbis ~/.config/sjbis'
 scp target/x86_64-unknown-linux-musl/release/sjbis "$HOST":~/sjbis/
 
 # Copy static files (dashboard UI). scp avoids needing rsync on the host.
-scp static/*.jsx static/*.css static/*.html "$HOST":~/sjbis/static/
+scp static/*.js static/*.jsx static/*.css static/*.html "$HOST":~/sjbis/static/
 
 # Configure the database on the daemon host (point dsn at your Postgres)
 ssh "$HOST" 'cat > ~/.config/sjbis/database.toml' << 'EOF'
