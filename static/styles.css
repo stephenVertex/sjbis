@@ -1082,6 +1082,42 @@ button { font-family: inherit; }
   font-style: italic;
 }
 
+/* Keep Focus failures contained in the overlay instead of blanking the app. */
+.focus-error {
+  --agent: var(--hot);
+}
+.focus-error .focus-body {
+  justify-content: center;
+}
+.focus-error-copy {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+}
+.focus-error-copy p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 16px;
+  line-height: 1.6;
+}
+.focus-error-message {
+  max-width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(255,61,127,0.3);
+  border-radius: var(--r-s);
+  background: rgba(255,61,127,0.08);
+  color: var(--hot);
+  font: 12px/1.5 var(--mono);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.focus-error-copy .btn-action {
+  flex: none;
+  min-width: 160px;
+}
+
 /* ── Question type renderers ───────────────────────────────────────────── */
 
 /* Yes/No */

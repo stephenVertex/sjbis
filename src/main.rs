@@ -51,6 +51,32 @@ fn read_stdin_ask_content() -> Result<StdinAskContent> {
     parse_stdin_ask_content(&input)
 }
 
+fn parse_choices_arg(input: &str) -> Result<Vec<Choice>> {
+    if input.trim_start().starts_with('[') {
+        return serde_json::from_str(input).context(
+            "invalid --choices JSON; expected an array of strings or canonical choice objects",
+        );
+    }
+
+    Ok(input
+        .split(',')
+        .map(|part| {
+            let label = part.trim().to_string();
+            Choice {
+                value: label.clone(),
+                label,
+                hint: None,
+            }
+        })
+        .collect())
+}
+
+fn parse_sub_questions(input: &str) -> Result<Vec<SubQuestion>> {
+    serde_json::from_str(input).context(
+        "invalid --form JSON; expected an array of sub-questions with valid choice entries",
+    )
+}
+
 /// Unescape common escape sequences in a string (\\n → newline, \\t → tab, etc.)
 fn unescape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -249,17 +275,11 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
     let client = reqwest::Client::new();
 
     // Build choices if multichoice
-    let choices = if let Some(ref raw) = args.choices {
-        if raw.starts_with('[') {
-            serde_json::from_str(raw).ok()
-        } else {
-            // CSV: "a,b,c"
-            let parts: Vec<String> = raw.split(',').map(|s| s.trim().to_string()).collect();
-            Some(parts.into_iter().map(|label| Choice { value: label.clone(), label, hint: None }).collect())
-        }
-    } else {
-        None
-    };
+    let choices = args
+        .choices
+        .as_deref()
+        .map(parse_choices_arg)
+        .transpose()?;
 
     // Build suggestions
     let suggestions = args.suggestions.as_ref().map(|s| {
@@ -293,12 +313,14 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
 
     // Build sub_questions from --form (JSON array or @file)
     let sub_questions = if let Some(ref raw) = args.form {
-        let json_str = if raw.starts_with('@') {
-            tokio::fs::read_to_string(&raw[1..]).await.ok()
+        let json = if let Some(path) = raw.strip_prefix('@') {
+            tokio::fs::read_to_string(path)
+                .await
+                .with_context(|| format!("failed to read --form file {path}"))?
         } else {
-            Some(raw.clone())
+            raw.clone()
         };
-        json_str.and_then(|s| serde_json::from_str::<Vec<SubQuestion>>(&s).ok())
+        Some(parse_sub_questions(&json)?)
     } else {
         None
     };
@@ -937,5 +959,57 @@ mod tests {
                 .expect_err("stdin content must be a valid object with a question");
             assert!(err.to_string().contains("stdin content"), "error should identify stdin content: {err:#}");
         }
+    }
+
+    #[test]
+    fn choices_arg_accepts_csv_and_mixed_json() {
+        assert_eq!(
+            parse_choices_arg("alpha, beta").expect("CSV choices should parse"),
+            vec![
+                Choice {
+                    value: "alpha".to_string(),
+                    label: "alpha".to_string(),
+                    hint: None,
+                },
+                Choice {
+                    value: "beta".to_string(),
+                    label: "beta".to_string(),
+                    hint: None,
+                },
+            ]
+        );
+
+        assert_eq!(
+            parse_choices_arg(
+                r#" ["plain", {"value":"canonical","label":"Canonical","hint":"More"}]"#,
+            )
+            .expect("mixed JSON choices should parse"),
+            vec![
+                Choice {
+                    value: "plain".to_string(),
+                    label: "plain".to_string(),
+                    hint: None,
+                },
+                Choice {
+                    value: "canonical".to_string(),
+                    label: "Canonical".to_string(),
+                    hint: Some("More".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn choices_arg_and_form_reject_invalid_choice_json() {
+        for input in ["[", "[42]", r#"[{"value":"missing-label"}]"#] {
+            let err = parse_choices_arg(input).expect_err("invalid choices must fail");
+            assert!(err.to_string().contains("invalid --choices JSON"));
+        }
+
+        let err = parse_sub_questions(
+            r#"[{"key":"scope","question":"Scope?","shape":"multichoice","choices":[false]}]"#,
+        )
+        .expect_err("invalid nested choices must fail");
+        assert!(err.to_string().contains("invalid --form JSON"));
     }
 }

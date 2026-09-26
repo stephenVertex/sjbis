@@ -560,6 +560,53 @@ function CardRouteStatus({ state, onClose, onRetry }) {
 
 // ── App ────────────────────────────────────────────────────────────────
 
+class FocusErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    const id = this.props.notification?.id || 'unknown';
+    console.error(`Focus render failed for notification ${id}`, error, info);
+  }
+
+  render() {
+    const { error } = this.state;
+    if (!error) return this.props.children;
+
+    const id = this.props.notification?.id || 'unknown';
+    const message = error instanceof Error ? error.message : String(error);
+    return (
+      <>
+        <div className="focus-backdrop" onClick={this.props.onClose} />
+        <div className="focus focus-error" role="alert" aria-labelledby="focus-error-title">
+          <div className="focus-hd">
+            <div className="glyph">!</div>
+            <div className="meta">
+              <div className="label">Focus view error</div>
+              <div className="sender">Notification {id}</div>
+            </div>
+            <button type="button" className="close" aria-label="Close" onClick={this.props.onClose}>✕</button>
+          </div>
+          <div className="focus-body">
+            <div className="focus-error-copy">
+              <h2 id="focus-error-title" className="focus-q">This card could not be opened.</h2>
+              <p>The dashboard is still running. Close this view to return to the open list.</p>
+              <code className="focus-error-message">{message}</code>
+              <button type="button" className="btn-action primary" onClick={this.props.onClose}>Close</button>
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+}
+
 function App() {
   const [t, setTweak] = window.useTweaks(TWEAK_DEFAULTS);
   const [notifications, setNotifications] = React.useState([]);
@@ -1076,14 +1123,16 @@ function App() {
       </div>
 
       {focused && (
-        <window.Focus
-          n={focused}
-          canonicalUrl={canonicalCardUrl(focused.id)}
-          onClose={closeCard}
-          onAnswer={onAnswer}
-          onDismiss={onDismiss}
-          onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(closeCard).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })}
-        />
+        <FocusErrorBoundary key={focused.id} notification={focused} onClose={closeCard}>
+          <window.Focus
+            n={focused}
+            canonicalUrl={canonicalCardUrl(focused.id)}
+            onClose={closeCard}
+            onAnswer={onAnswer}
+            onDismiss={onDismiss}
+            onSnooze={(minutes) => apiSnooze(focused.id, minutes).then(closeCard).catch((e) => { console.error('Snooze failed:', e); alert(e.message); })}
+          />
+        </FocusErrorBoundary>
       )}
       {!focused && ['loading', 'not-found', 'error'].includes(focusLoad.status) && (
         <CardRouteStatus state={focusLoad} onClose={closeCard} onRetry={retryCard} />
