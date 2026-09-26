@@ -40,6 +40,15 @@ function normalizeNotif(n) {
   };
 }
 
+function normalizeChoices(choices) {
+  if (!Array.isArray(choices)) return [];
+  return choices.map((choice) => (
+    typeof choice === 'string'
+      ? { value: choice, label: choice }
+      : choice
+  ));
+}
+
 // Simple markdown-to-JSX converter (bold, italic, links, lists, headings, line breaks)
 function renderMarkdown(text) {
   if (!text) return null;
@@ -285,13 +294,14 @@ function MultiChoiceRenderer({ n, onAnswer }) {
   const isChat = (n.agent_name || n.agent) === 'fam';
   const [sel, setSel] = React.useState(null);
   const [editing, setEditing] = React.useState(null);
-  const cols = n.choices.length === 3 ? 'three' : n.choices.length === 4 ? 'four' : '';
-  const pick = (c) => { setSel(c.value); setTimeout(() => onAnswer(c.label), 220); };
+  const choices = normalizeChoices(n.choices);
+  const cols = choices.length === 3 ? 'three' : choices.length === 4 ? 'four' : '';
+  const pick = (c) => { setSel(c.value); setTimeout(() => onAnswer(c.value), 220); };
   const startEdit = (label) => setEditing({ text: label });
   const startCustom = () => setEditing({ text: '' });
   useFocusKeys(
     [
-      ...n.choices.map((c, i) => ({
+      ...choices.map((c, i) => ({
         match: (e) => !editing && e.key === String(i + 1),
         fn: () => pick(c),
       })),
@@ -315,7 +325,7 @@ function MultiChoiceRenderer({ n, onAnswer }) {
   return (
     <>
       <div className={`choices ${cols}`}>
-        {n.choices.map((c, i) => (
+        {choices.map((c, i) => (
           <button
             key={c.value}
             className={`choice ${sel === c.value ? 'selected' : ''}`}
@@ -725,7 +735,7 @@ function FormSubWidget({ sq, value, onChange }) {
         </button>
       );
     case 'multichoice': {
-      const choices = sq.choices || [];
+      const choices = normalizeChoices(sq.choices);
       return (
         <div className="form-sub-choices">
           {choices.map((c) => (

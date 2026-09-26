@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<!-- Serve the repository root over HTTP, then open /tests/web/focus-regression.html. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1440" />
+<title>SJBIS Focus regression</title>
+<link rel="stylesheet" href="../../static/styles.css" />
+<style>
+  .regression-status {
+    position: fixed;
+    z-index: 1000;
+    right: 16px;
+    bottom: 16px;
+    width: min(420px, calc(100vw - 32px));
+    padding: 14px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 10px;
+    background: rgba(11, 12, 15, 0.96);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    color: #f4f3ee;
+    font: 12px/1.5 "JetBrains Mono", monospace;
+  }
+  .regression-status h2 {
+    margin: 0 0 8px;
+    color: #ffb341;
+    font-size: 13px;
+  }
+  .regression-status ol {
+    max-height: 180px;
+    margin: 8px 0 0;
+    padding-left: 22px;
+    overflow: auto;
+  }
+  .regression-status .pass { color: #c7f33d; }
+  .regression-status .fail { color: #ff3d7f; }
+  .regression-status code { color: #5bd4ff; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<aside class="regression-status" aria-live="polite">
+  <h2 id="regression-title">Focus regression: running</h2>
+  <div>Original exception: <code id="original-exception"></code></div>
+  <ol id="regression-results"></ol>
+</aside>
+
+<script src="focus-regression.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="../../static/tweaks-panel.jsx"></script>
+<script type="text/babel" src="../../static/data.jsx"></script>
+<script type="text/babel" src="../../static/focus.jsx"></script>
+<script type="text/babel" src="../../static/app.jsx"></script>
+</body>
+</html>
