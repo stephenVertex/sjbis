@@ -15,7 +15,6 @@ const TYPE_LABEL = {
   form: 'Form',
 };
 
-<<<<<<< HEAD
 const TERMINAL_STATUS = {
   answered: {
     label: 'Answered',
