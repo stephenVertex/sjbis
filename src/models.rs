@@ -307,6 +307,17 @@ pub struct Agent {
     pub kind: String,
 }
 
+/// Agent identity plus notification-derived activity metadata for API reads.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceSummary {
+    pub name: String,
+    pub glyph: String,
+    pub color: String,
+    pub kind: String,
+    pub last_activity_at: Option<DateTime<Utc>>,
+    pub has_open_notification: bool,
+}
+
 /// New notification request from a caller
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AskRequest {
@@ -414,7 +425,7 @@ pub struct DashboardState {
     pub notifications: Vec<Notification>,
     pub history: Vec<Notification>,
     pub rules: Vec<Rule>,
-    pub agents: HashMap<String, Agent>,
+    pub agents: HashMap<String, SourceSummary>,
     #[serde(default)]
     pub version: String,
 }

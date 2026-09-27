@@ -54,11 +54,13 @@ pub async fn version() -> Json<serde_json::Value> {
 }
 
 /// GET /state — full dashboard init payload
-pub async fn get_state(State(state): State<AppState>) -> Result<Json<DashboardState>, (StatusCode, Json<serde_json::Value>)> {
+pub async fn get_state(
+    State(state): State<AppState>,
+) -> Result<Json<DashboardState>, (StatusCode, Json<serde_json::Value>)> {
     let notifications = state.db.list_open_notifications().await.map_err(db_err)?;
     let history = state.db.list_history(50).await.map_err(db_err)?;
     let rules = state.db.list_rules().await.map_err(db_err)?;
-    let agents_raw = state.db.list_agents().await.map_err(db_err)?;
+    let agents_raw = state.db.list_source_summaries().await.map_err(db_err)?;
     let mut agents = HashMap::new();
     for a in agents_raw {
         agents.insert(a.name.clone(), a);
@@ -691,8 +693,10 @@ pub async fn delete_rule(
 }
 
 /// GET /agents
-pub async fn list_agents(State(state): State<AppState>) -> Result<Json<HashMap<String, Agent>>, (StatusCode, Json<serde_json::Value>)> {
-    let raw = state.db.list_agents().await.map_err(db_err)?;
+pub async fn list_agents(
+    State(state): State<AppState>,
+) -> Result<Json<HashMap<String, SourceSummary>>, (StatusCode, Json<serde_json::Value>)> {
+    let raw = state.db.list_source_summaries().await.map_err(db_err)?;
     let mut agents = HashMap::new();
     for a in raw {
         agents.insert(a.name.clone(), a);
