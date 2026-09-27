@@ -8,6 +8,7 @@ mod push;
 mod router;
 mod rules;
 mod sse;
+mod triage;
 mod upgrade;
 mod version;
 

@@ -21,6 +21,11 @@ impl Db {
         Ok(Self { pool })
     }
 
+    #[allow(dead_code)]
+    pub fn triage(&self) -> crate::triage::store::TriageStore {
+        crate::triage::store::TriageStore::new(self.pool.clone())
+    }
+
     // ── Notifications ────────────────────────────────────────────────────
 
     pub async fn insert_notification(&self, n: &Notification) -> Result<()> {
