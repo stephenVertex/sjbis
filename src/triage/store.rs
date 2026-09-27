@@ -968,6 +968,45 @@ mod tests {
             .find(|item| item.id == "z-inline")
             .unwrap();
         assert_eq!(inline.markdown, "new inline");
+
+        let ambiguity = store
+            .refresh_queue(
+                &queue.id,
+                vec![
+                    path_item("a", "a.md", "a"),
+                    path_item("b", "b.md", "b changed"),
+                    path_item("moved", "new.md", "same bytes"),
+                    path_item("new", "brand-new.md", "new"),
+                    path_item("candidate-one", "candidate-one.md", "gone"),
+                    path_item("candidate-two", "candidate-two.md", "gone"),
+                    inline_item("z-inline", "new inline"),
+                ],
+            )
+            .await?;
+        assert_eq!(ambiguity.ambiguous, 1);
+        let ambiguous = store
+            .get_detail(&queue.id)
+            .await?
+            .unwrap()
+            .catalog
+            .into_iter()
+            .find(|item| item.id == "missing")
+            .unwrap();
+        assert_eq!(ambiguous.freshness.state, FreshnessState::Ambiguous);
+        assert_eq!(
+            ambiguous.freshness.candidate_paths,
+            vec!["candidate-one.md", "candidate-two.md"]
+        );
+        let attached = store
+            .attach_item(
+                &queue.id,
+                "missing",
+                path_item("candidate-one", "candidate-one.md", "gone"),
+            )
+            .await?;
+        assert_eq!(attached.path.as_deref(), Some("candidate-one.md"));
+        assert_eq!(attached.markdown, "gone");
+        assert_eq!(attached.freshness.state, FreshnessState::Current);
         Ok(())
     }
 
@@ -984,6 +1023,7 @@ mod tests {
                     inline_item("a", "A v1"),
                     inline_item("b", "B"),
                     inline_item("c", "C"),
+                    path_item("path", "path.md", "immutable path snapshot"),
                 ],
             ))
             .await?;
@@ -1063,6 +1103,37 @@ mod tests {
                 },
             )
             .await?;
+        store
+            .record_decision(
+                &queue.id,
+                "path",
+                DecisionPatch {
+                    verdict: PatchField::Value(TriageVerdict::Schedule),
+                    target: PatchField::Missing,
+                },
+            )
+            .await?;
+
+        let completed = store.get_queue(&queue.id).await?.unwrap();
+        assert_eq!(completed.counts.decided, 4);
+        assert!(completed.complete);
+        assert_eq!(completed.status, QueueStatus::Open);
+
+        let revision_rewrite =
+            sqlx::query("UPDATE triage_revisions SET verdict = 'delete' WHERE event_id = $1")
+                .bind(merge.event_id)
+                .execute(&store.pool)
+                .await
+                .unwrap_err();
+        assert!(revision_rewrite.to_string().contains("append-only"));
+        let snapshot_rewrite = sqlx::query(
+            "UPDATE triage_items SET markdown = 'changed' WHERE queue_id = $1 AND id = 'path'",
+        )
+        .bind(&queue.id)
+        .execute(&store.pool)
+        .await
+        .unwrap_err();
+        assert!(snapshot_rewrite.to_string().contains("immutable"));
 
         let first_page = store.list_revisions(&queue.id, 0, 3).await?;
         assert_eq!(first_page.items.len(), 3);

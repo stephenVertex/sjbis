@@ -1084,6 +1084,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains(r#"{"path":"item.md"}"#));
+
+        fs::write(
+            temp.path().join("escape.json"),
+            r#"[{"path":"../outside.md"}]"#,
+        )
+        .unwrap();
+        let error = discover_from(
+            temp.path(),
+            Path::new("."),
+            ".md",
+            &SourceSpec::JsonList {
+                path: "escape.json".to_string(),
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("relative to the queue root"));
     }
 
     #[test]
