@@ -310,6 +310,27 @@ impl Db {
             .collect::<Result<Vec<_>>>()
     }
 
+    pub async fn list_source_summaries(&self) -> Result<Vec<SourceSummary>> {
+        let rows = sqlx::query(
+            r#"SELECT
+                   a.name,
+                   a.glyph,
+                   a.color,
+                   a.kind,
+                   MAX(n.created_at) AS last_activity_at,
+                   COALESCE(BOOL_OR(n.status = 'open'), FALSE) AS has_open_notification
+               FROM agents a
+               LEFT JOIN notifications n ON n.agent_name = a.name
+               GROUP BY a.name, a.glyph, a.color, a.kind
+               ORDER BY a.name"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| Self::row_to_source_summary(r))
+            .collect::<Result<Vec<_>>>()
+    }
+
     pub async fn get_or_create_agent(&self, name: &str) -> Result<Agent> {
         if let Some(row) = sqlx::query("SELECT * FROM agents WHERE name = $1")
             .bind(name)
@@ -469,5 +490,79 @@ impl Db {
             color: row.try_get("color")?,
             kind: row.try_get("kind")?,
         })
+    }
+
+    fn row_to_source_summary(row: &sqlx::postgres::PgRow) -> anyhow::Result<SourceSummary> {
+        Ok(SourceSummary {
+            name: row.try_get("name")?,
+            glyph: row.try_get("glyph")?,
+            color: row.try_get("color")?,
+            kind: row.try_get("kind")?,
+            last_activity_at: row.try_get("last_activity_at")?,
+            has_open_notification: row.try_get("has_open_notification")?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "needs DATABASE_URL: the sjbis refinery gate runs offline without Postgres; run with `cargo test -- --ignored` against a dev database"]
+    async fn source_summaries_derive_latest_activity_and_open_status(
+        pool: PgPool,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"INSERT INTO agents (name, glyph, color, kind) VALUES
+                   ('active', 'A', 'red', 'test'),
+                   ('open', 'O', 'blue', 'test'),
+                   ('idle', 'I', 'gray', 'test')"#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            r#"INSERT INTO notifications
+                   (id, agent_name, sender, src, question, question_type, status, created_at)
+               VALUES
+                   ('active-old', 'active', '', '', 'old', 'ack', 'answered',
+                    '2026-09-20T10:00:00Z'),
+                   ('active-new', 'active', '', '', 'new', 'ack', 'dismissed',
+                    '2026-09-26T12:30:00Z'),
+                   ('open-old', 'open', '', '', 'answered', 'ack', 'answered',
+                    '2026-09-21T09:00:00Z'),
+                   ('open-new', 'open', '', '', 'waiting', 'ack', 'open',
+                    '2026-09-25T08:15:00Z')"#,
+        )
+        .execute(&pool)
+        .await?;
+
+        let summaries = Db { pool }.list_source_summaries().await?;
+        let by_name: std::collections::HashMap<_, _> = summaries
+            .into_iter()
+            .map(|summary| (summary.name.clone(), summary))
+            .collect();
+        assert_eq!(by_name.len(), 3);
+
+        let active = &by_name["active"];
+        assert_eq!(
+            active.last_activity_at,
+            Some("2026-09-26T12:30:00Z".parse::<DateTime<Utc>>()?)
+        );
+        assert!(!active.has_open_notification);
+
+        let open = &by_name["open"];
+        assert_eq!(
+            open.last_activity_at,
+            Some("2026-09-25T08:15:00Z".parse::<DateTime<Utc>>()?)
+        );
+        assert!(open.has_open_notification);
+
+        let idle = &by_name["idle"];
+        assert_eq!(idle.last_activity_at, None);
+        assert!(!idle.has_open_notification);
+
+        Ok(())
     }
 }

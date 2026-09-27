@@ -18,6 +18,8 @@ const PALETTES = {
   magenta: { primary: '#FF3D7F', hot: '#FF6BA8', siren: '#FF1F4D', warm: '#FFB341', calm: '#5BD4FF', violet: '#B89DFF' },
 };
 
+const SOURCE_ACTIVITY_STORAGE_KEY = 'sjbis.sourceActivityWindow';
+
 // Type pill icons — tiny SVG glyphs
 const TYPE_ICONS = {
   yesno:       '⊕',
@@ -297,30 +299,54 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef, no
   );
 }
 
-function AgentRail({ agents, counts, filterAgent, onFilterAgent, textMode }) {
+function AgentRail({
+  agents,
+  sourceKeys,
+  counts,
+  filterAgent,
+  onFilterAgent,
+  textMode,
+  hiddenCount,
+  onRevealHidden,
+}) {
   return (
     <div className={'rail' + (textMode ? ' text-mode' : '')}>
       <div className="lbl">SRC</div>
-      {Object.entries(agents).map(([id, a]) => (
-        <div
-          key={id}
-          className={'agent-pill' + (filterAgent === id ? ' active' : '') + (textMode ? ' text' : '')}
-          style={{ borderColor: counts[id] ? window.agentColor(id) : undefined }}
-          title={a.name}
-          onClick={() => onFilterAgent(id)}
+      {sourceKeys.map((id) => {
+        const a = agents[id];
+        if (!a) return null;
+        return (
+          <div
+            key={id}
+            className={'agent-pill' + (filterAgent === id ? ' active' : '') + (textMode ? ' text' : '')}
+            style={{ borderColor: counts[id] ? window.agentColor(id) : undefined }}
+            title={a.name}
+            onClick={() => onFilterAgent(id)}
+          >
+            {textMode ? (
+              <span className="agent-name" style={{ color: window.agentColor(id) }}>{a.name}</span>
+            ) : (
+              <span style={{ color: window.agentColor(id) }}>{a.glyph}</span>
+            )}
+            {counts[id] > 0 && (
+              <span className="badge" style={{ background: window.agentColor(id) }}>
+                {counts[id]}
+              </span>
+            )}
+          </div>
+        );
+      })}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          className="rail-hidden-reveal"
+          title={`Show ${hiddenCount} hidden source${hiddenCount === 1 ? '' : 's'}`}
+          aria-label={`Show ${hiddenCount} hidden source${hiddenCount === 1 ? '' : 's'}`}
+          onClick={onRevealHidden}
         >
-          {textMode ? (
-            <span className="agent-name" style={{ color: window.agentColor(id) }}>{a.name}</span>
-          ) : (
-            <span style={{ color: window.agentColor(id) }}>{a.glyph}</span>
-          )}
-          {counts[id] > 0 && (
-            <span className="badge" style={{ background: window.agentColor(id) }}>
-              {counts[id]}
-            </span>
-          )}
-        </div>
-      ))}
+          +{hiddenCount} <span>hidden</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -513,6 +539,23 @@ function App() {
   React.useEffect(() => {
     localStorage.setItem('sjbis.historyHidden', historyHidden ? '1' : '0');
   }, [historyHidden]);
+  const [sourceActivityWindow, setSourceActivityWindow] = React.useState(() => {
+    try {
+      return window.SjbisAgentVisibility.normalizeActivityPreset(
+        localStorage.getItem(SOURCE_ACTIVITY_STORAGE_KEY)
+      );
+    } catch (e) {
+      return window.SjbisAgentVisibility.DEFAULT_ACTIVITY_PRESET;
+    }
+  });
+  const [showHiddenSources, setShowHiddenSources] = React.useState(false);
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(SOURCE_ACTIVITY_STORAGE_KEY, sourceActivityWindow);
+    } catch (e) {
+      console.warn('Could not persist source activity window:', e);
+    }
+  }, [sourceActivityWindow]);
   const [connected, setConnected] = React.useState(false);
   const [version, setVersion] = React.useState('');
   const cardRefs = React.useRef({});
@@ -580,6 +623,19 @@ function App() {
               if (resolvingRef.current.has(event.notification.id)) return prev;
               if (prev.some((n) => n.id === event.notification.id)) return prev;
               return [event.notification, ...prev];
+            });
+            setAgents((prev) => {
+              const sourceKey = event.notification?.agent_name || event.notification?.agent;
+              const activityAt = event.notification?.created_at || event.notification?.sentAt;
+              if (!sourceKey || !activityAt || !prev[sourceKey]) return prev;
+              return {
+                ...prev,
+                [sourceKey]: {
+                  ...prev[sourceKey],
+                  last_activity_at: activityAt,
+                  has_open_notification: true,
+                },
+              };
             });
             break;
           case 'notification_updated': {
@@ -725,6 +781,24 @@ function App() {
     return c;
   }, [notifications, agents]);
 
+  const openSourceKeys = React.useMemo(
+    () => Object.keys(counts).filter((sourceKey) => counts[sourceKey] > 0),
+    [counts]
+  );
+  const sourcePartition = React.useMemo(
+    () => window.SjbisAgentVisibility.partitionSourceKeys(
+      agents,
+      openSourceKeys,
+      filterAgent,
+      sourceActivityWindow,
+      nowMs
+    ),
+    [agents, openSourceKeys, filterAgent, sourceActivityWindow, nowMs]
+  );
+  const railSourceKeys = showHiddenSources
+    ? [...sourcePartition.visible, ...sourcePartition.hidden]
+    : sourcePartition.visible;
+
   // Filtered to single agent when rail is clicked
   const visible = React.useMemo(
     () => notifications
@@ -845,6 +919,11 @@ function App() {
     setSelectedIdx(0);
   };
 
+  const onSourceActivityWindowChange = (value) => {
+    setShowHiddenSources(false);
+    setSourceActivityWindow(window.SjbisAgentVisibility.normalizeActivityPreset(value));
+  };
+
   // Demo notifications are no longer injected client-side.
   // Use the TweaksPanel "Trigger urgent notification" button or `sjbis ask` CLI.
 
@@ -871,10 +950,13 @@ function App() {
 
         <AgentRail
           agents={agents}
+          sourceKeys={railSourceKeys}
           counts={counts}
           filterAgent={filterAgent}
           onFilterAgent={onFilterAgent}
           textMode={t.textRail}
+          hiddenCount={showHiddenSources ? 0 : sourcePartition.hiddenCount}
+          onRevealHidden={() => setShowHiddenSources(true)}
         />
 
         <div className="canvas">
@@ -991,6 +1073,17 @@ function App() {
         <window.TweakToggle
           label="Text rail (monospace names instead of icons)" value={t.textRail}
           onChange={(v) => setTweak('textRail', v)}
+        />
+        <window.TweakSelect
+          label="Show sources active within"
+          value={sourceActivityWindow}
+          options={[
+            { value: '1d', label: '1 day' },
+            { value: '7d', label: '7 days' },
+            { value: '30d', label: '30 days' },
+            { value: 'all', label: 'Show all' },
+          ]}
+          onChange={onSourceActivityWindowChange}
         />
         <window.TweakToggle
           label="Show connection lines" value={t.showConnections}
