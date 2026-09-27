@@ -101,6 +101,7 @@ pub async fn run_daemon(
         .route("/agents", get(list_agents).post(register_agent))
         .route("/device/register", post(register_device))
         .route("/device/unregister", post(unregister_device))
+        .merge(crate::triage::http::routes())
         .fallback_service(ServeDir::new("static"))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
