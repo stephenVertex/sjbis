@@ -1,5 +1,4 @@
 use super::models::*;
-use chrono::Utc;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -938,7 +937,7 @@ pub fn attachment_action(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::fs;
     #[cfg(unix)]
