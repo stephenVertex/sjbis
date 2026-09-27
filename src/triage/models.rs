@@ -44,6 +44,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CreateQueue {
     pub name: String,
     pub root: String,
@@ -145,9 +146,8 @@ impl FromStr for FreshnessState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Freshness {
     pub state: FreshnessState,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub candidate_paths: Vec<String>,
 }
 
@@ -224,7 +224,6 @@ pub struct TriageQueue {
     pub complete: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub closed_at: Option<DateTime<Utc>>,
     pub counts: QueueCounts,
 }
@@ -234,15 +233,12 @@ pub struct TriageItem {
     pub queue_id: String,
     pub id: String,
     pub source_kind: SourceKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<Value>,
     pub markdown: String,
     pub content_sha256: String,
     pub captured_at: DateTime<Utc>,
     pub freshness: Freshness,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_revision: Option<TriageRevision>,
 }
 
@@ -252,9 +248,7 @@ pub struct TriageRevision {
     pub queue_id: String,
     pub item_id: String,
     pub revision: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub verdict: Option<TriageVerdict>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     pub content_sha256: String,
     pub decided_at: DateTime<Utc>,
@@ -353,5 +347,28 @@ mod tests {
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn output_models_keep_contractually_nullable_fields() {
+        let freshness = serde_json::to_value(Freshness::current()).unwrap();
+        assert_eq!(
+            freshness,
+            json!({"state":"current","reason":null,"candidate_paths":[]})
+        );
+
+        let revision = TriageRevision {
+            event_id: 1,
+            queue_id: "queue".to_string(),
+            item_id: "item".to_string(),
+            revision: 1,
+            verdict: None,
+            target: None,
+            content_sha256: sha256_hex(b"item"),
+            decided_at: Utc::now(),
+        };
+        let revision = serde_json::to_value(revision).unwrap();
+        assert!(revision.get("verdict").unwrap().is_null());
+        assert!(revision.get("target").unwrap().is_null());
     }
 }

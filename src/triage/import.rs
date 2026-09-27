@@ -185,6 +185,21 @@ fn validate_patterns(patterns: &[String]) -> Result<(), ImportError> {
     Ok(())
 }
 
+pub fn validate_persisted_source_spec(source_spec: &SourceSpec) -> Result<(), ImportError> {
+    match source_spec {
+        SourceSpec::Glob { patterns } => validate_patterns(patterns),
+        SourceSpec::JsonList { path } => {
+            let path = Path::new(path);
+            if !path.is_absolute() {
+                return Err(ImportError::Validation(
+                    "persisted JSON-list source path must be absolute".to_string(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 fn validate_character_classes(pattern: &str) -> Result<(), ImportError> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut index = 0;
@@ -575,16 +590,19 @@ fn validate_observation(observation: &Observation) -> Result<(), ImportError> {
     }
     if let Some(path) = &observation.path {
         let parsed = Path::new(path);
-        if parsed.is_absolute()
-            || parsed.components().any(|component| {
-                matches!(
-                    component,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
+        if path.is_empty()
+            || parsed.is_absolute()
+            || parsed
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
         {
             return Err(ImportError::Validation(format!(
                 "normalized item path must be relative and contained: {path}"
+            )));
+        }
+        if path_to_slash(parsed)? != *path {
+            return Err(ImportError::Validation(format!(
+                "normalized item path is not canonical: {path}"
             )));
         }
         if observation.source.is_some() {
@@ -1119,6 +1137,20 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("a.md"));
         assert!(message.contains("b.md"));
+    }
+
+    #[test]
+    fn normalized_observations_reject_empty_and_noncanonical_paths() {
+        for path in ["", "./item.md", "nested//item.md"] {
+            let error = validate_and_sort_observations(vec![Observation {
+                id: "item".to_string(),
+                markdown: "body".to_string(),
+                path: Some(path.to_string()),
+                source: None,
+            }])
+            .unwrap_err();
+            assert!(error.to_string().contains("normalized item path"));
+        }
     }
 
     #[test]

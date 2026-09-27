@@ -1,5 +1,6 @@
 use super::import::{
     ImportError, ReconcileAction, attachment_action, reconcile, validate_and_sort_observations,
+    validate_persisted_source_spec,
 };
 use super::models::*;
 use chrono::{DateTime, Utc};
@@ -493,9 +494,9 @@ fn validate_create_request(request: &CreateQueue) -> Result<(), TriageStoreError
             "queue name must be non-empty and have no surrounding whitespace".to_string(),
         ));
     }
-    if request.root.is_empty() {
+    if request.root.is_empty() || !std::path::Path::new(&request.root).is_absolute() {
         return Err(TriageStoreError::Validation(
-            "queue root must not be empty".to_string(),
+            "queue root must be an absolute path".to_string(),
         ));
     }
     if request.strip_suffix.is_empty() {
@@ -503,15 +504,8 @@ fn validate_create_request(request: &CreateQueue) -> Result<(), TriageStoreError
             "strip suffix must not be empty".to_string(),
         ));
     }
-    match &request.source_spec {
-        SourceSpec::Glob { patterns } if patterns.is_empty() => Err(TriageStoreError::Validation(
-            "glob source specification needs at least one pattern".to_string(),
-        )),
-        SourceSpec::JsonList { path } if path.is_empty() => Err(TriageStoreError::Validation(
-            "JSON-list source specification path must not be empty".to_string(),
-        )),
-        _ => Ok(()),
-    }
+    validate_persisted_source_spec(&request.source_spec)?;
+    Ok(())
 }
 
 fn validate_target_text(target: String) -> Result<String, TriageStoreError> {
