@@ -509,6 +509,7 @@ mod tests {
     use super::*;
 
     #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "needs DATABASE_URL: the sjbis refinery gate runs offline without Postgres; run with `cargo test -- --ignored` against a dev database"]
     async fn source_summaries_derive_latest_activity_and_open_status(
         pool: PgPool,
     ) -> anyhow::Result<()> {
