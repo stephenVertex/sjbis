@@ -278,6 +278,10 @@ The `sjbis` binary is both the client (talks to the daemon) and the daemon itsel
 | `sjbis dismiss <id>` | Mark as seen without answering; no reply sent. |
 | `sjbis rule add\|allow\|list\|rm` | Manage filtering rules (see [API](#post-rules--create-filtering-rules)). |
 | `sjbis entity add\|list\|show\|rm` | Manage named contact groups used in rules. |
+| `sjbis triage create\|list\|show` | Create and inspect durable batch-review queues. |
+| `sjbis triage decide\|clear` | Append or clear an item's current verdict. |
+| `sjbis triage refresh\|attach` | Reconcile producer files or resolve an ambiguous move explicitly. |
+| `sjbis triage close\|reopen\|export` | Freeze/unfreeze mutations and consume revision events. |
 | `sjbis register --agent-name <n>` | Register an agent identity (name + optional glyph/color). |
 | `sjbis prime` | Print the agent primer (working agreement, question types, daemon status). |
 | `sjbis upgrade` | Self-update from GitHub Releases (see [Upgrading](#upgrading)). |
@@ -285,6 +289,180 @@ The `sjbis` binary is both the client (talks to the daemon) and the daemon itsel
 
 Run `sjbis prime` first when wiring up a new agent — it prints the live daemon
 status and the exact pattern to follow.
+
+### Batch triage queues
+
+Triage queues turn a directory or JSON list of independent Markdown items into
+a durable review session. Each item receives one of five wire verdicts:
+`schedule`, `delete`, `needs_replan`, `merge_into`, or `leave_captured`. Only
+`merge_into` carries a target, and that target is another declared item id in
+the same queue.
+
+Create from one or more root-relative globs, or from a JSON list:
+
+```bash
+sjbis triage create planning-review --root ./notes \
+  --glob '**/*_analysis.md' --glob 'followups/*.md'
+
+sjbis triage create planning-review --root ./notes \
+  --json-list ./triage-items.json
+```
+
+The JSON list is an array of objects. Each entry is exactly one of:
+
+```json
+[
+  {"path": "reviews/alpha_analysis.md"},
+  {
+    "id": "inline-question",
+    "markdown": "# Question\n\nChoose a disposition.",
+    "source": {"note_id": "ys-example", "revision": 4}
+  }
+]
+```
+
+Path-backed ids come from `item:` in YAML-style frontmatter when present;
+otherwise they come from the basename after removing `--strip-suffix`
+(default `_analysis.md`). Id collisions reject the whole create and name every
+colliding path. Paths are canonicalized beneath `--root`; absolute paths,
+parent traversal, and symlinks that escape the root are rejected. Supported
+glob syntax is `*`, `?`, character classes such as `[a-z]`, and recursive
+`**`; brace expansion is not supported.
+
+Catalog order is deterministic: path-backed items first in lexical canonical
+relative-path order, then inline items in lexical id order. JSON array order
+and filesystem enumeration order are not retained.
+
+```bash
+sjbis triage list
+sjbis triage --json show planning-review
+
+sjbis triage decide planning-review alpha schedule
+sjbis triage decide planning-review duplicate-note merge_into --target canonical-note
+sjbis triage clear planning-review alpha
+
+sjbis triage refresh planning-review
+sjbis triage attach planning-review moved-note archive/moved_analysis.md
+
+sjbis triage close planning-review
+sjbis triage export planning-review --since '' --limit 100
+sjbis triage reopen planning-review
+```
+
+Decisions are append-only revisions. `clear` appends an explicit null verdict;
+it does not delete history. Progress counts each item's latest non-null verdict
+once. A non-empty queue with a latest verdict for every item reports
+`complete: true`, but remains `status: "open"` until explicitly closed.
+
+#### Incremental export and cursors
+
+Every export is a self-contained envelope with `queue`, the complete `catalog`,
+revision `items`, and an opaque `nextCursor`. Omitted or empty `since` means
+stream origin. Persist `nextCursor` only after processing the returned events,
+then pass it unchanged in the next consumer session:
+
+```bash
+sjbis triage --json export planning-review --since '' --limit 100 > page.json
+jq -r '.nextCursor' page.json > planning-review.cursor
+
+# Later, potentially from another process or host:
+cursor=$(cat planning-review.cursor)
+curl --fail-with-body \
+  "$SJBIS_DAEMON/triage/queues/planning-review/export?since=$cursor&limit=100" \
+  > next-page.json
+```
+
+Do not derive a cursor from `decided_at`: event ids are the durable ordering
+key, and timestamps can collide. Consumers should deduplicate or audit with
+`event_id`, not counts alone. Queue creation does not return a cursor.
+
+#### Snapshots and refresh
+
+Path-backed Markdown, SHA-256, and capture time form the served snapshot; the
+captured source path is also visible and may advance when a move is resolved.
+`triage refresh` rereads the queue's persisted glob or JSON-list source
+specification, but changed producer text never overwrites the stored path
+snapshot. Instead, the item becomes `content_changed` and continues to serve
+the original Markdown and hash on which earlier verdicts were based.
+
+Refresh freshness states are:
+
+| State | Meaning |
+|---|---|
+| `current` | The declared id and hash still match, or one unambiguous hash move reattached the original id. |
+| `missing` | The original item was not observed and its hash was not found elsewhere. |
+| `content_changed` | The declared id remains, but producer bytes differ from the captured snapshot. |
+| `ambiguous` | Hash correspondence has multiple possible missing items or observed paths; candidate paths are returned. |
+
+Hash reattachment occurs only for exactly one missing path item and exactly one
+new observed path with the same bytes. Ambiguity does not fail the whole
+refresh. Resolve it with `triage attach QUEUE ITEM PATH`, which requires a file
+inside the queue root whose hash matches the stored snapshot, or remove the
+duplicate candidates and refresh again. Unknown ids and hashes become new
+items. Inline items are refreshed by re-importing the same id; their Markdown,
+hash, provenance, and capture time are replaced together. If local discovery
+fails, the CLI stops before posting a refresh, so an unreadable producer cannot
+be mistaken for an empty source.
+
+#### Merge direction and queue freezing
+
+A `merge_into` revision is one directed edge from the decided item to its
+target: `duplicate -> canonical`. The API validates the target against the
+same queue at decision time and rejects self-targets and direct reciprocal
+edges. Consumers read only that direct edge. SJBIS does not compute transitive
+closure, rewrite chains to a canonical root, or infer targets from comments.
+
+Closing a queue is a mutation freeze, not deletion. While closed, decision
+patches (including clear), refresh, and attach return HTTP `409` with code
+`queue_closed`; their CLI forms exit `3` with `queue is closed; reopen first`.
+Show, list, and export remain available. `reopen` lifts the freeze, including
+for an incompletely decided queue.
+
+#### HTTP contract
+
+The CLI discovers and hashes local files before calling the daemon. Direct HTTP
+producers must send the already captured observations themselves.
+
+| Method and path | Contract |
+|---|---|
+| `POST /triage/queues` | Create from `{name, root, strip_suffix, source_spec, items}`; returns `201`. |
+| `GET /triage/queues` | List queue summaries. |
+| `GET /triage/queues/{queue}` | Return `{queue, catalog}` by id or unique name. |
+| `PATCH /triage/queues/{queue}/items/{item}/decision` | Append a revision; use `{"verdict": null}` to clear. |
+| `POST /triage/queues/{queue}/refresh` | Reconcile `{"items": [...]}` captured from the persisted source. |
+| `POST /triage/queues/{queue}/items/{item}/attach` | Attach `{"path": "...", "markdown": "..."}` to a matching stale snapshot. |
+| `POST /triage/queues/{queue}/close` | Freeze mutating item operations. |
+| `POST /triage/queues/{queue}/reopen` | Return the queue to open status. |
+| `GET /triage/queues/{queue}/export?since=&limit=100` | Return the catalog plus ordered revision events and `nextCursor`. |
+
+An absent `verdict` field means "retain the previous verdict"; explicit JSON
+null means clear; an empty string is invalid. `merge_into` requires `target`,
+and other verdicts reject it. Export limits are 1 through 1000.
+
+Expected failures are explicit: duplicate queue names return `409` with the
+existing queue id and resume command; closed mutations return `409`; missing
+queues/items return `404`; invalid payloads, targets, cursors, limits, paths,
+source shapes, and identity collisions return `400` at the HTTP boundary (or
+exit `1` when rejected locally/by the CLI). Duplicate queue creation never
+silently resumes. Ambiguous refresh is a successful result with counts and
+candidate paths, not an error.
+
+#### Deliberate v1 exclusions
+
+Triage v1 has no persistent file watcher, deadlines, automatic/default
+verdicts, or timeout-generated revisions. It does not produce Yesod
+`open_questions` or write answers back to planning results. It has no
+spotlight-md dependency, per-item highlight threads, brace expansion,
+user-defined/JSON-array ordering, transitive merge traversal, or canonical
+merge-root rewriting. Inputs are filesystem globs or the documented JSON list,
+and the interchange format is JSON; richer producer integrations remain
+separate work.
+
+The executable acceptance scenario is `tests/triage-e2e.sh`. It creates a
+temporary PostgreSQL cluster and daemon, copies real fixtures, drives separate
+CLI and HTTP cursor sessions, and removes all temporary state on exit. Set
+`SJBIS_BIN` to reuse an existing binary or `SJBIS_TRIAGE_E2E_KEEP=1` to retain
+failure artifacts.
 
 ### Supplying ask content over stdin
 
