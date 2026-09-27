@@ -3,7 +3,7 @@
 
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  if (root) root.SjbisSourceVisibility = api;
+  if (root) root.SjbisAgentVisibility = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
   'use strict';
 
@@ -34,18 +34,6 @@
     return Number.isFinite(timestamp) ? timestamp : null;
   }
 
-  function sourceEntries(sourceSummaries) {
-    if (Array.isArray(sourceSummaries)) {
-      return sourceSummaries.flatMap((summary) => {
-        if (!summary || typeof summary !== 'object') return [];
-        const key = summary.key || summary.id || summary.name;
-        return key == null ? [] : [[String(key), summary]];
-      });
-    }
-    if (!sourceSummaries || typeof sourceSummaries !== 'object') return [];
-    return Object.entries(sourceSummaries);
-  }
-
   function sourceKeySet(sourceKeys) {
     if (sourceKeys == null) return new Set();
     if (typeof sourceKeys === 'string') return new Set([sourceKeys]);
@@ -65,6 +53,9 @@
     activityPreset,
     now
   ) {
+    const summaries = sourceSummaries && typeof sourceSummaries === 'object'
+      ? sourceSummaries
+      : {};
     const preset = normalizeActivityPreset(activityPreset);
     const activityWindowMs = ACTIVITY_WINDOWS_MS[preset];
     const parsedNow = timestampMilliseconds(now);
@@ -75,22 +66,23 @@
     const visible = [];
     const hidden = [];
 
-    for (const [sourceKey, summary] of sourceEntries(sourceSummaries)) {
+    for (const [sourceKey, summary] of Object.entries(summaries)) {
       const currentOrSelected = protectedSourceKeys.has(sourceKey)
         || selectedSourceKey === sourceKey;
       const hasOpenNotification = Boolean(summary && summary.has_open_notification);
       const lastActivityMs = timestampMilliseconds(summary && summary.last_activity_at);
-      const withinActivityWindow = cutoffMs === null
-        || (lastActivityMs !== null && lastActivityMs >= cutoffMs);
+      const isStale = cutoffMs !== null
+        && lastActivityMs !== null
+        && lastActivityMs < cutoffMs;
 
-      if (currentOrSelected || hasOpenNotification || withinActivityWindow) {
+      if (currentOrSelected || hasOpenNotification || !isStale) {
         visible.push(sourceKey);
       } else {
         hidden.push(sourceKey);
       }
     }
 
-    return { visible, hidden };
+    return { visible, hidden, hiddenCount: hidden.length };
   }
 
   return Object.freeze({
