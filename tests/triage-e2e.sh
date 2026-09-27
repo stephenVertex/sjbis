@@ -190,9 +190,6 @@ jq -e '
     | .source == {kind:"yesod_note", note_id:"ys-fixture-inline", revision:7}
 ' "$RUN_ROOT/initial.json" >/dev/null || fail "inline source provenance was not preserved"
 
-STALE_SNAPSHOT=$(jq -er '.catalog[] | select(.id == "03-stale") | .markdown' "$RUN_ROOT/initial.json")
-STALE_HASH=$(jq -er '.catalog[] | select(.id == "03-stale") | .content_sha256' "$RUN_ROOT/initial.json")
-
 cli triage --json decide "$QUEUE_ID" declared-alpha schedule >"$RUN_ROOT/schedule.json"
 cli triage --json decide "$QUEUE_ID" 02-basename needs_replan >"$RUN_ROOT/basename-decision.json"
 cli triage --json decide "$QUEUE_ID" merge-source merge_into --target merge-target \
@@ -270,12 +267,12 @@ cli triage --json refresh "$QUEUE_ID" >"$RUN_ROOT/refreshed.json"
 jq -e '.content_changed == 1 and .moved == 1 and .ambiguous == 1' \
     "$RUN_ROOT/refreshed.json" >/dev/null || fail "refresh did not classify stale and moved fixtures"
 api_json GET "/triage/queues/$QUEUE_ID" >"$RUN_ROOT/after-refresh.json"
-jq -e --arg markdown "$STALE_SNAPSHOT" --arg hash "$STALE_HASH" '
-    .catalog[]
-    | select(.id == "03-stale")
-    | .freshness.state == "content_changed"
-      and .markdown == $markdown
-      and .content_sha256 == $hash
+jq -e --slurpfile initial "$RUN_ROOT/initial.json" '
+    (.catalog[] | select(.id == "03-stale")) as $refreshed
+    | ($initial[0].catalog[] | select(.id == "03-stale")) as $captured
+    | $refreshed.freshness.state == "content_changed"
+      and $refreshed.markdown == $captured.markdown
+      and $refreshed.content_sha256 == $captured.content_sha256
 ' "$RUN_ROOT/after-refresh.json" >/dev/null || fail "stale item lost its served snapshot"
 jq -e '
     .catalog[]
