@@ -1,0 +1,19 @@
+[
+  {"path": "01-declared_analysis.md"},
+  {"path": "02-basename_analysis.md"},
+  {"path": "03-stale_analysis.md"},
+  {"path": "04-move-old_analysis.md"},
+  {"path": "05-ambiguous-old_analysis.md"},
+  {"path": "06-merge-source_analysis.md"},
+  {"path": "07-merge-target_analysis.md"},
+  {"path": "08-merge-terminal_analysis.md"},
+  {
+    "id": "inline-provenance",
+    "markdown": "# Inline item\n\nThis snapshot has no producer path.",
+    "source": {
+      "kind": "yesod_note",
+      "note_id": "ys-fixture-inline",
+      "revision": 7
+    }
+  }
+]
