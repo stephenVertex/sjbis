@@ -53,7 +53,7 @@ pub struct AttachRequest {
     pub markdown: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CatalogItem {
     pub id: String,
     pub source_kind: SourceKind,
@@ -82,7 +82,7 @@ impl From<TriageItem> for CatalogItem {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct QueueDetailResponse {
     pub queue: TriageQueue,
     pub catalog: Vec<CatalogItem>,
@@ -97,7 +97,7 @@ impl From<QueueDetail> for QueueDetailResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExportResponse {
     pub queue: TriageQueue,
     pub catalog: Vec<CatalogItem>,

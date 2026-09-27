@@ -9,6 +9,7 @@ mod router;
 mod rules;
 mod sse;
 mod triage;
+mod triage_cli;
 mod upgrade;
 mod version;
 
@@ -136,13 +137,23 @@ fn generate_synthetic_diff(detail: &Option<String>, question: &str) -> Vec<DiffL
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new("info,sjbis=debug"))
         .init();
 
     let args = cli::Cli::parse();
 
+    match run_cli(args).await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error:#}");
+            std::process::ExitCode::from(triage_cli::exit_code(&error))
+        }
+    }
+}
+
+async fn run_cli(args: cli::Cli) -> Result<()> {
     match args.command {
         cli::Commands::Ask(ask_args) => cmd_ask(ask_args).await,
         cli::Commands::List { json } => cmd_list(json).await,
@@ -153,6 +164,7 @@ async fn main() -> Result<()> {
         cli::Commands::Status { id } => cmd_status(id).await,
         cli::Commands::Rule { command } => cmd_rule(command).await,
         cli::Commands::Entity { command } => cmd_entity(command),
+        cli::Commands::Triage(args) => triage_cli::run(args).await,
         cli::Commands::Daemon { command } => cmd_daemon(command).await,
         cli::Commands::Prime => cmd_prime().await,
         cli::Commands::Register { agent_name, glyph, color } => cmd_register(agent_name, glyph, color).await,

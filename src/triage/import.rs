@@ -147,6 +147,25 @@ pub fn discover_from(
     })
 }
 
+pub fn capture_path(
+    root: &Path,
+    supplied: &Path,
+    strip_suffix: &str,
+) -> Result<Observation, ImportError> {
+    let canonical_root = fs::canonicalize(root).map_err(|source| ImportError::Io {
+        path: root.display().to_string(),
+        source,
+    })?;
+    if !canonical_root.is_dir() {
+        return Err(ImportError::Validation(format!(
+            "queue root is not a directory: {}",
+            canonical_root.display()
+        )));
+    }
+    let canonical_path = canonical_item_path(&canonical_root, supplied)?;
+    observation_from_path(&canonical_root, &canonical_path, strip_suffix)
+}
+
 fn resolve_from(base: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
@@ -986,6 +1005,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(custom.items[0].id, "two");
+    }
+
+    #[test]
+    fn capture_path_reads_a_normalized_root_relative_snapshot() {
+        let temp = tempdir().unwrap();
+        write(&temp.path().join("nested/item_analysis.md"), "# Item\n");
+
+        let observation = capture_path(
+            temp.path(),
+            Path::new("nested/item_analysis.md"),
+            DEFAULT_STRIP_SUFFIX,
+        )
+        .unwrap();
+
+        assert_eq!(observation.id, "item");
+        assert_eq!(observation.path.as_deref(), Some("nested/item_analysis.md"));
+        assert_eq!(observation.markdown, "# Item\n");
+        assert!(
+            capture_path(
+                temp.path(),
+                Path::new("../outside.md"),
+                DEFAULT_STRIP_SUFFIX
+            )
+            .is_err()
+        );
     }
 
     #[test]
