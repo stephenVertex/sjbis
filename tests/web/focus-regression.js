@@ -6,17 +6,18 @@
   const PLAIN_ID = 'sjbis-focus-plain';
   const CANONICAL_ID = 'sjbis-focus-canonical';
   const CRASH_ID = 'sjbis-focus-crash';
-  const PLAIN_CHOICES = [
-    'Accept suggestion',
-    'Keep → plan it',
-    'Wontfix / obsolete',
-    'Duplicate',
-    'Needs discussion',
-  ];
+  const PLAIN_CHOICES = ['Legacy first choice', 'Legacy second choice'];
   const CANONICALIZED_PLAIN_CHOICES = PLAIN_CHOICES.map((choice) => ({
     value: choice,
     label: choice,
   }));
+  const TRIAGE_CHOICES = [
+    { value: 'schedule', label: 'Accept suggestion' },
+    { value: 'delete', label: 'Keep → plan it' },
+    { value: 'needs_replan', label: 'Wontfix / obsolete' },
+    { value: 'merge_into', label: 'Duplicate' },
+    { value: 'leave_captured', label: 'Needs discussion' },
+  ];
   const MARKDOWN = [
     '# Triage review: yesod-triage',
     '',
@@ -34,12 +35,12 @@
   const notifications = [
     {
       id: PLAIN_ID,
-      agent_name: 'yesod-triage',
-      instance: 'Mayor triage regression',
-      sender: 'yesod-triage',
-      src: 'yesod-triage · Mayor triage regression',
-      question: 'How should ys-yes-24ho be dispositioned?',
-      detail_markdown: MARKDOWN,
+      agent_name: 'compatibility-fixture',
+      instance: 'Legacy choice decoding',
+      sender: 'compatibility-fixture',
+      src: 'compatibility-fixture · Legacy choice decoding',
+      question: 'Can legacy plain-string choices still render?',
+      detail: 'This fixture isolates the legacy decoder from triage verdict values.',
       question_type: 'multichoice',
       choices: CANONICALIZED_PLAIN_CHOICES,
       urgency: 3,
@@ -49,14 +50,13 @@
     {
       id: CANONICAL_ID,
       agent_name: 'yesod-triage',
+      instance: 'Mayor triage regression',
       sender: 'yesod-triage',
-      question: 'Which canonical action should be submitted?',
-      detail: 'The visible label intentionally differs from the wire value.',
+      src: 'yesod-triage · Mayor triage regression',
+      question: 'How should ys-yes-24ho be dispositioned?',
+      detail_markdown: MARKDOWN,
       question_type: 'multichoice',
-      choices: [
-        { value: 'triage-accept', label: 'Accept suggestion' },
-        { value: 'triage-plan', label: 'Keep and plan it', hint: 'Submit the stable id' },
-      ],
+      choices: TRIAGE_CHOICES,
       urgency: 2,
       blocking: false,
       created_at: '2026-09-22T18:33:20Z',
@@ -205,23 +205,24 @@
     // The live CLI path returns canonical objects; swap in the legacy wire form
     // immediately before Focus opens to exercise its defensive string decoder.
     plainNotification.choices = PLAIN_CHOICES;
-    cardForQuestion('How should ys-yes-24ho be dispositioned?').click();
+    cardForQuestion('Can legacy plain-string choices still render?').click();
     await waitFor(() => document.querySelector('.focus'), 'plain-string Focus should open');
-    assert(JSON.stringify(choiceLabels()) === JSON.stringify(PLAIN_CHOICES), 'plain-string payload renders all five labels in order');
-    assert(document.querySelectorAll('.focus .md-detail a').length === 2, 'long markdown renders both note-id links');
+    assert(JSON.stringify(choiceLabels()) === JSON.stringify(PLAIN_CHOICES), 'plain-string payload renders legacy labels in order');
     assert(harness.uncaught.length === 0, 'plain-string Focus produces no uncaught browser error');
     plainNotification.choices = CANONICALIZED_PLAIN_CHOICES;
     await closeFocus();
 
-    cardForQuestion('Which canonical action should be submitted?').click();
-    await waitFor(() => choiceLabels().includes('Keep and plan it'), 'canonical Focus should open');
+    cardForQuestion('How should ys-yes-24ho be dispositioned?').click();
+    await waitFor(() => choiceLabels().includes('Keep → plan it'), 'canonical Focus should open');
     assert(choiceLabels().includes('Accept suggestion'), 'canonical choice labels render');
+    assert(JSON.stringify(choiceLabels()) === JSON.stringify(TRIAGE_CHOICES.map((choice) => choice.label)), 'all five triage labels render in order');
+    assert(document.querySelectorAll('.focus .md-detail a').length === 2, 'long markdown renders both note-id links');
     Array.from(document.querySelectorAll('.focus .choice')).find((button) => (
-      button.querySelector('.lbl').textContent === 'Keep and plan it'
+      button.querySelector('.lbl').textContent === 'Keep → plan it'
     )).click();
     await waitFor(() => harness.answers.length === 1, 'canonical answer request should be captured');
     assert(harness.answers[0].id === CANONICAL_ID, 'answer targets the focused card id');
-    assert(harness.answers[0].body.answer === 'triage-plan', 'answer posts choice.value rather than the visible label');
+    assert(harness.answers[0].body.answer === 'delete', 'answer posts the canonical verdict rather than the visible label');
     assert(harness.uncaught.length === 0, 'canonical Focus produces no uncaught browser error');
     await waitFor(() => !document.querySelector('.focus'), 'answered Focus should close');
 
@@ -236,8 +237,8 @@
     await waitFor(() => !document.querySelector('.focus-error'), 'fallback Close should return to the list');
     assert(cardForQuestion('Force a descendant render exception'), 'card list remains usable after closing the fallback');
 
-    cardForQuestion('How should ys-yes-24ho be dispositioned?').click();
-    await waitFor(() => choiceLabels().length === 5, 'a normal card should open after the forced failure');
+    cardForQuestion('Can legacy plain-string choices still render?').click();
+    await waitFor(() => choiceLabels().length === PLAIN_CHOICES.length, 'a normal card should open after the forced failure');
     assert(!document.querySelector('.focus-error'), 'the boundary resets for the next card');
     await closeFocus();
 
