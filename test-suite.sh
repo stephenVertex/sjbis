@@ -258,7 +258,7 @@ EOF
 
 gap
 ID12=$(ask --question "How should ys-yes-24ho be dispositioned?" \
-    --choices '["Accept suggestion","Keep → plan it","Wontfix / obsolete","Duplicate","Needs discussion"]' \
+    --choices '[{"value":"schedule","label":"Accept suggestion"},{"value":"delete","label":"Keep → plan it"},{"value":"needs_replan","label":"Wontfix / obsolete"},{"value":"merge_into","label":"Duplicate"},{"value":"leave_captured","label":"Needs discussion"}]' \
     --agent-name "yesod-triage" \
     --instance "Mayor triage regression" \
     --detail-markdown "$TRIAGE_DETAIL" \
@@ -269,17 +269,16 @@ import json
 import sys
 
 expected = [
-    "Accept suggestion",
-    "Keep → plan it",
-    "Wontfix / obsolete",
-    "Duplicate",
-    "Needs discussion",
+    ("schedule", "Accept suggestion"),
+    ("delete", "Keep → plan it"),
+    ("needs_replan", "Wontfix / obsolete"),
+    ("merge_into", "Duplicate"),
+    ("leave_captured", "Needs discussion"),
 ]
 notification = json.load(sys.stdin)
 choices = notification.get("choices") or []
 actual = [(choice.get("value"), choice.get("label")) for choice in choices]
-wanted = [(choice, choice) for choice in expected]
-if actual != wanted:
+if actual != expected:
     raise SystemExit(f"triage choice round-trip mismatch: {actual!r}")
 print(notification["id"])
 ')

@@ -13,12 +13,22 @@ pub struct Db {
 const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note, sub_questions";
 
 impl Db {
+    #[cfg(test)]
+    pub(crate) fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
     pub async fn connect(dsn: &str) -> Result<Self> {
         let pool = PgPool::connect(dsn).await?;
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await?;
         Ok(Self { pool })
+    }
+
+    #[allow(dead_code)]
+    pub fn triage(&self) -> crate::triage::store::TriageStore {
+        crate::triage::store::TriageStore::new(self.pool.clone())
     }
 
     // ── Notifications ────────────────────────────────────────────────────

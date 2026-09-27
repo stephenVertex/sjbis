@@ -4,27 +4,23 @@ import XCTest
 
 final class ChoiceDecodingTests: XCTestCase {
     private let reportedStrings = [
-        "Accept suggestion",
-        "Keep → plan it",
-        "Wontfix / obsolete",
-        "Duplicate",
-        "Needs discussion",
+        "Legacy first choice",
+        "Legacy second choice",
     ]
 
-    private let canonicalValue = "triage-ys-yes-24ho"
-    private let canonicalLabel = "Keep → plan it"
+    private let triageChoices = [
+        Choice(value: "schedule", label: "Accept suggestion", hint: nil),
+        Choice(value: "delete", label: "Keep → plan it", hint: nil),
+        Choice(value: "needs_replan", label: "Wontfix / obsolete", hint: nil),
+        Choice(value: "merge_into", label: "Duplicate", hint: "Select a target item"),
+        Choice(value: "leave_captured", label: "Needs discussion", hint: nil),
+    ]
 
     func testNotificationAndSubQuestionDecodeBothChoiceForms() throws {
         let notification = try decodeNotification()
         let expected = reportedStrings.map {
             Choice(value: $0, label: $0, hint: nil)
-        } + [
-            Choice(
-                value: canonicalValue,
-                label: canonicalLabel,
-                hint: "Suggested verdict"
-            ),
-        ]
+        } + triageChoices
 
         let topLevelChoices = try XCTUnwrap(notification.choices)
         XCTAssertEqual(topLevelChoices, expected)
@@ -62,11 +58,16 @@ final class ChoiceDecodingTests: XCTestCase {
 
     private func decodeNotification() throws -> SjbisNotification {
         var choices = reportedStrings.map { $0 as Any }
-        choices.append([
-            "value": canonicalValue,
-            "label": canonicalLabel,
-            "hint": "Suggested verdict",
-        ] as [String: Any])
+        choices.append(contentsOf: triageChoices.map { choice in
+            var object: [String: Any] = [
+                "value": choice.value,
+                "label": choice.label,
+            ]
+            if let hint = choice.hint {
+                object["hint"] = hint
+            }
+            return object
+        })
         let payload: [String: Any] = [
             "id": "sjbis-bZ66aqXF",
             "agent_name": "yesod-triage",

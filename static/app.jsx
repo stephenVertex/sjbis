@@ -531,6 +531,9 @@ function App() {
   const [agents, setAgents] = React.useState({});
   const [filterAgent, setFilterAgent] = React.useState(null);
   const [focused, setFocused] = React.useState(null);
+  const [surface, setSurface] = React.useState(() => (
+    new URLSearchParams(window.location.search).get('view') === 'triage' ? 'triage' : 'inbox'
+  ));
   const [burst, setBurst] = React.useState(null);
   const [selectedIdx, setSelectedIdx] = React.useState(0);
   const [historyHidden, setHistoryHidden] = React.useState(
@@ -605,6 +608,13 @@ function App() {
     }
     window.history.replaceState({}, '', url);
   }, [focused]);
+
+  React.useEffect(() => {
+    const url = new URL(window.location);
+    if (surface === 'triage') url.searchParams.set('view', 'triage');
+    else url.searchParams.delete('view');
+    window.history.replaceState({}, '', url);
+  }, [surface]);
 
   // SSE connection
   React.useEffect(() => {
@@ -821,7 +831,7 @@ function App() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
     };
     const onKey = (e) => {
-      if (focused) return;
+      if (focused || surface !== 'inbox') return;
       if (isTyping(e.target)) return;
       // Toggle history sidebar (works even with no open cards)
       if (e.key.toLowerCase() === 'h') {
@@ -854,7 +864,7 @@ function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [visible, selectedIdx, focused]);
+  }, [visible, selectedIdx, focused, surface]);
 
   // Scroll selected card into view
   React.useEffect(() => {
@@ -930,14 +940,35 @@ function App() {
   return (
     <>
       <div className="field" />
-      <div className={'app' + (t.textRail ? ' text-rail' : '') + (historyHidden ? ' history-hidden' : '')}>
+      <div className={'app' + (t.textRail ? ' text-rail' : '') + (historyHidden ? ' history-hidden' : '') + (surface === 'triage' ? ' triage-mode' : '')}>
         <div className="topbar">
           <div className="brand">
             <span className="dot" />
             <span>sjbis</span>
             <span className="sub">information surfacer{version ? ` · ${version}` : ' · v0.1'}{connected ? '' : ' · offline'}</span>
           </div>
-          <CommandBar onAddRule={apiAddRule} />
+          <div className="surface-switch" role="tablist" aria-label="Dashboard surface">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={surface === 'inbox'}
+              className={surface === 'inbox' ? 'is-active' : ''}
+              onClick={() => setSurface('inbox')}
+            >
+              Inbox <span>{notifications.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={surface === 'triage'}
+              className={surface === 'triage' ? 'is-active' : ''}
+              onClick={() => { setFocused(null); setSurface('triage'); }}
+            >
+              Triage
+            </button>
+          </div>
+          {surface === 'inbox' && <CommandBar onAddRule={apiAddRule} />}
+          {surface === 'triage' && <div className="topbar-spacer" />}
           <LiveClock nowMs={nowMs} />
           <button
             className="settings-btn"
@@ -948,7 +979,7 @@ function App() {
           </button>
         </div>
 
-        <AgentRail
+        {surface === 'inbox' && <AgentRail
           agents={agents}
           sourceKeys={railSourceKeys}
           counts={counts}
@@ -957,9 +988,9 @@ function App() {
           textMode={t.textRail}
           hiddenCount={showHiddenSources ? 0 : sourcePartition.hiddenCount}
           onRevealHidden={() => setShowHiddenSources(true)}
-        />
+        />}
 
-        <div className="canvas">
+        {surface === 'inbox' && <div className="canvas">
           <div className="canvas-hd">
             <h1>Awaiting your attention</h1>
             <span className="count">
@@ -1003,9 +1034,9 @@ function App() {
               </div>
             )}
           </div>
-        </div>
+        </div>}
 
-        {!historyHidden && (
+        {surface === 'inbox' && !historyHidden && (
           <History
             items={history}
             nowMs={nowMs}
@@ -1013,7 +1044,7 @@ function App() {
             onHide={() => setHistoryHidden(true)}
           />
         )}
-        {historyHidden && (
+        {surface === 'inbox' && historyHidden && (
           <button
             className="history-show"
             title="Show history (H)"
@@ -1021,6 +1052,10 @@ function App() {
           >
             ‹ History
           </button>
+        )}
+
+        {surface === 'triage' && (
+          <window.TriageDashboard onExit={() => setSurface('inbox')} />
         )}
       </div>
 
@@ -1031,7 +1066,7 @@ function App() {
       )}
       {burst && <window.Burst text={burst.text} color={burst.color} onDone={() => setBurst(null)} />}
 
-      {!focused && visible.length > 0 && (
+      {surface === 'inbox' && !focused && visible.length > 0 && (
         <div className="kbd-help" aria-hidden="true">
           <span className="grp"><kbd>J</kbd><kbd>K</kbd> navigate</span>
           <span className="grp"><kbd>↵</kbd> open</span>

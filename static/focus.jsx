@@ -130,7 +130,8 @@ function parseInline(text) {
     const linkMatch = remaining.match(/^(.*?)\[(.*?)\]\((.*?)\)(.*)$/);
     if (linkMatch) {
       if (linkMatch[1]) parts.push(<span key={`s-${key++}`}>{linkMatch[1]}</span>);
-      parts.push(<a key={`a-${key++}`} href={linkMatch[3]} target="_blank" rel="noopener noreferrer">{linkMatch[2]}</a>);
+      const href = safeMarkdownHref(linkMatch[3]);
+      parts.push(<a key={`a-${key++}`} href={href} target="_blank" rel="noopener noreferrer">{linkMatch[2]}</a>);
       remaining = linkMatch[4];
       continue;
     }
@@ -149,6 +150,12 @@ function parseInline(text) {
   }
 
   return <>{parts}</>;
+}
+
+function safeMarkdownHref(value) {
+  const href = String(value || '').trim();
+  if (/^(https?:|mailto:|note:)/i.test(href) || /^(#|\/|\.\/|\.\.\/)/.test(href)) return href;
+  return '#';
 }
 
 // ── Countdown widget ────────────────────────────────────────────────────
@@ -1030,4 +1037,10 @@ function Burst({ text, color, onDone }) {
   );
 }
 
-Object.assign(window, { Focus, Burst, TYPE_LABEL, fmtSentAt });
+Object.assign(window, {
+  Focus,
+  Burst,
+  TYPE_LABEL,
+  fmtSentAt,
+  SjbisMarkdown: { render: renderMarkdown },
+});
