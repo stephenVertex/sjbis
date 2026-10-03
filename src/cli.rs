@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, ArgGroup, Args, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -66,6 +66,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: EntityCommands,
     },
+    /// Create and operate batch triage queues
+    Triage(TriageArgs),
     /// Daemon lifecycle
     Daemon {
         #[command(subcommand)]
@@ -93,6 +95,83 @@ pub enum Commands {
         /// Upgrade to a specific tag (e.g. v0.1.2) instead of the latest
         #[arg(long)]
         tag: Option<String>,
+    },
+}
+
+#[derive(Args)]
+pub struct TriageArgs {
+    /// Emit the server response as JSON
+    #[arg(long, global = true)]
+    pub json: bool,
+    #[command(subcommand)]
+    pub command: TriageCommands,
+}
+
+#[derive(Args)]
+#[command(group(
+    ArgGroup::new("source")
+        .required(true)
+        .multiple(false)
+        .args(["glob", "json_list"])
+))]
+pub struct TriageCreateArgs {
+    /// Unique queue name
+    pub name: String,
+    /// Root directory containing path-backed items
+    #[arg(long)]
+    pub root: PathBuf,
+    /// Glob pattern relative to the queue root; may be repeated
+    #[arg(long, value_name = "PATTERN", num_args = 1.., action = ArgAction::Append)]
+    pub glob: Vec<String>,
+    /// JSON file containing path or inline item objects
+    #[arg(long, value_name = "FILE")]
+    pub json_list: Option<PathBuf>,
+    /// Suffix removed from filenames when deriving item ids
+    #[arg(long, default_value = "_analysis.md")]
+    pub strip_suffix: String,
+}
+
+#[derive(Subcommand)]
+pub enum TriageCommands {
+    /// Capture local items and create a queue
+    Create(TriageCreateArgs),
+    /// List triage queues
+    List,
+    /// Show a queue and its captured catalog
+    Show { queue: String },
+    /// Record or revise an item's verdict
+    Decide {
+        queue: String,
+        item: String,
+        /// schedule | delete | needs_replan | merge_into | leave_captured
+        verdict: crate::triage::models::TriageVerdict,
+        /// Required destination item for merge_into
+        #[arg(long, required_if_eq("verdict", "merge_into"))]
+        target: Option<String>,
+    },
+    /// Clear an item's current verdict by recording an explicit null revision
+    Clear { queue: String, item: String },
+    /// Re-read a queue's stored source specification from the producer filesystem
+    Refresh { queue: Option<String> },
+    /// Resolve a stale item by explicitly attaching a path relative to the queue root
+    Attach {
+        queue: String,
+        item: String,
+        path: PathBuf,
+    },
+    /// Freeze queue mutations
+    Close { queue: String },
+    /// Re-enable queue mutations
+    Reopen { queue: String },
+    /// Export the self-contained catalog and revision cursor envelope
+    Export {
+        queue: String,
+        /// Opaque cursor returned by an earlier export; empty means stream origin
+        #[arg(long, num_args = 0..=1, default_missing_value = "")]
+        since: Option<String>,
+        /// Maximum revisions to return (server default: 100)
+        #[arg(long)]
+        limit: Option<usize>,
     },
 }
 
@@ -391,6 +470,94 @@ mod tests {
             };
             assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
         }
+    }
+
+    #[test]
+    fn triage_create_parses_repeated_globs_and_default_suffix() {
+        let cli = Cli::try_parse_from([
+            "sjbis", "triage", "create", "planning", "--root", "notes",
+            "--glob", "*.md", "--glob", "nested/**/*.md", "--json",
+        ]).expect("triage create should parse");
+
+        let Commands::Triage(TriageArgs { json, command }) = cli.command else {
+            panic!("expected triage command");
+        };
+        assert!(json);
+        let TriageCommands::Create(args) = command else {
+            panic!("expected triage create");
+        };
+        assert_eq!(args.name, "planning");
+        assert_eq!(args.root, PathBuf::from("notes"));
+        assert_eq!(args.glob, ["*.md", "nested/**/*.md"]);
+        assert_eq!(args.json_list, None);
+        assert_eq!(args.strip_suffix, "_analysis.md");
+    }
+
+    #[test]
+    fn triage_create_requires_exactly_one_source_mode() {
+        let missing = Cli::try_parse_from([
+            "sjbis", "triage", "create", "planning", "--root", "notes",
+        ]).err().expect("a create source is required");
+        assert_eq!(missing.kind(), ErrorKind::MissingRequiredArgument);
+
+        let conflicting = Cli::try_parse_from([
+            "sjbis", "triage", "create", "planning", "--root", "notes",
+            "--glob", "*.md", "--json-list", "items.json",
+        ]).err().expect("create source modes must be exclusive");
+        assert_eq!(conflicting.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn triage_decide_accepts_only_wire_verdicts_and_requires_merge_target() {
+        for verdict in ["schedule", "delete", "needs_replan", "leave_captured"] {
+            Cli::try_parse_from(["sjbis", "triage", "decide", "queue", "item", verdict])
+                .unwrap_or_else(|error| panic!("{verdict} should parse: {error}"));
+        }
+        Cli::try_parse_from([
+            "sjbis", "triage", "decide", "queue", "item", "merge_into",
+            "--target", "other",
+        ]).expect("merge_into with a target should parse");
+
+        let missing_target = Cli::try_parse_from([
+            "sjbis", "triage", "decide", "queue", "item", "merge_into",
+        ]).err().expect("merge_into requires a target");
+        assert_eq!(missing_target.kind(), ErrorKind::MissingRequiredArgument);
+        let invalid = Cli::try_parse_from([
+            "sjbis", "triage", "decide", "queue", "item", "needs-discussion",
+        ]).err().expect("ad hoc verdicts are not wire values");
+        assert_eq!(invalid.kind(), ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn triage_parses_every_non_create_workflow_and_export_cursor_forms() {
+        for argv in [
+            vec!["sjbis", "triage", "list"],
+            vec!["sjbis", "triage", "show", "queue"],
+            vec!["sjbis", "triage", "clear", "queue", "item"],
+            vec!["sjbis", "triage", "refresh"],
+            vec!["sjbis", "triage", "refresh", "queue"],
+            vec!["sjbis", "triage", "attach", "queue", "item", "moved.md"],
+            vec!["sjbis", "triage", "close", "queue"],
+            vec!["sjbis", "triage", "reopen", "queue"],
+            vec!["sjbis", "triage", "export", "queue"],
+            vec!["sjbis", "triage", "export", "queue", "--since", ""],
+            vec!["sjbis", "triage", "export", "queue", "--since", "triage-v1-42", "--limit", "25"],
+        ] {
+            Cli::try_parse_from(&argv)
+                .unwrap_or_else(|error| panic!("{} should parse: {error}", argv.join(" ")));
+        }
+
+        let cli = Cli::try_parse_from([
+            "sjbis", "triage", "export", "queue", "--since", "",
+        ]).unwrap();
+        let Commands::Triage(TriageArgs { command, .. }) = cli.command else {
+            panic!("expected triage command");
+        };
+        let TriageCommands::Export { since, limit, .. } = command else {
+            panic!("expected triage export");
+        };
+        assert_eq!(since.as_deref(), Some(""));
+        assert_eq!(limit, None);
     }
 }
 

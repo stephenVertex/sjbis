@@ -105,6 +105,7 @@ fn api_routes() -> Router<AppState> {
         .route("/agents", get(list_agents).post(register_agent))
         .route("/device/register", post(register_device))
         .route("/device/unregister", post(unregister_device))
+        .merge(crate::triage::http::routes())
 }
 
 fn public_routes<S>(static_dir: &Path) -> Router<S>
