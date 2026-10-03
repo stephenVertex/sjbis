@@ -112,6 +112,14 @@
         version: 'focus-regression',
       });
     }
+    const notificationMatch = url.match(/\/notification\/([^/?]+)$/);
+    if (notificationMatch && method === 'GET') {
+      const id = decodeURIComponent(notificationMatch[1]);
+      const notification = notifications.find((item) => item.id === id);
+      return notification
+        ? response(notification)
+        : response({ error: `Notification ${id} not found` }, 404);
+    }
     const answerMatch = url.match(/\/answer\/([^/?]+)$/);
     if (answerMatch && method === 'POST') {
       harness.answers.push({

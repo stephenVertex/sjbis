@@ -15,6 +15,34 @@ const TYPE_LABEL = {
   form: 'Form',
 };
 
+const TERMINAL_STATUS = {
+  answered: {
+    label: 'Answered',
+    icon: '✓',
+    detail: 'This notification has a recorded response.',
+  },
+  dismissed: {
+    label: 'Dismissed',
+    icon: '−',
+    detail: 'Dismissed without sending a reply.',
+  },
+  timed_out: {
+    label: 'Timed out',
+    icon: '⌛',
+    detail: 'The deadline passed before a reply was recorded.',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    icon: '×',
+    detail: 'The sender cancelled this notification.',
+  },
+  muted: {
+    label: 'Muted',
+    icon: '◌',
+    detail: 'A rule muted this notification before it reached the active queue.',
+  },
+};
+
 // Compatibility export for app.jsx until all consumers use SjbisTime directly.
 function fmtSentAt(value) {
   return window.SjbisTime.formatAge(value);
@@ -24,6 +52,7 @@ function fmtSentAt(value) {
 function normalizeNotif(n) {
   return {
     ...n,
+    status: n.status || 'open',
     type: n.question_type || n.type || 'ack',
     agent: n.agent_name || n.agent,
     yesLabel: n.yesLabel || n.yes_label,
@@ -38,6 +67,136 @@ function normalizeNotif(n) {
       default: sq.defaultValue !== undefined ? sq.defaultValue : sq.default_value,
     })),
   };
+}
+
+function formatResolvedAt(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function CopyLinkControl({ url }) {
+  const [copyState, setCopyState] = React.useState('idle');
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    setCopyState('idle');
+  }, [url]);
+
+  React.useEffect(() => {
+    if (copyState !== 'copied') return undefined;
+    const timer = setTimeout(() => setCopyState('idle'), 2400);
+    return () => clearTimeout(timer);
+  }, [copyState]);
+
+  const selectUrl = () => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  };
+
+  const copyUrl = async () => {
+    if (!url) return;
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(url);
+      setCopyState('copied');
+    } catch (_) {
+      setCopyState('manual');
+      requestAnimationFrame(selectUrl);
+    }
+  };
+
+  const statusText = copyState === 'copied'
+    ? 'Copied to clipboard'
+    : copyState === 'manual'
+      ? 'Clipboard blocked - copy the selected URL manually'
+      : 'Stable card URL';
+
+  return (
+    <div
+      className="focus-share"
+      role="group"
+      aria-label="Share this card"
+      onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}
+    >
+      <button
+        type="button"
+        className={`focus-copy-button ${copyState === 'copied' ? 'copied' : ''}`}
+        onClick={copyUrl}
+        disabled={!url}
+      >
+        <span aria-hidden="true">{copyState === 'copied' ? '✓' : '∞'}</span>
+        {copyState === 'copied' ? 'Copied' : 'Copy link'}
+      </button>
+      <input
+        ref={inputRef}
+        className="focus-share-url"
+        aria-label="Canonical card URL"
+        value={url || ''}
+        readOnly
+        onFocus={(event) => event.currentTarget.select()}
+        onClick={(event) => event.currentTarget.select()}
+      />
+      <span className={`focus-copy-status ${copyState}`} role="status" aria-live="polite">
+        {statusText}
+      </span>
+    </div>
+  );
+}
+
+function TerminalResult({ n }) {
+  const status = TERMINAL_STATUS[n.status] || {
+    label: n.status ? n.status.replace(/_/g, ' ') : 'Closed',
+    icon: '◇',
+    detail: 'This notification is no longer open.',
+  };
+  const hasAnswer = (n.answer_label !== null && n.answer_label !== undefined)
+    || (n.answer !== null && n.answer !== undefined);
+  const answer = n.answer_label || n.answer;
+  const answerText = !hasAnswer
+    ? 'No response was recorded.'
+    : answer === '' || answer === null || answer === undefined
+      ? 'Empty response recorded.'
+      : answer;
+  const hasNote = n.note !== null && n.note !== undefined;
+  const noteText = !hasNote
+    ? 'No note was attached.'
+    : n.note === ''
+      ? 'Empty note recorded.'
+      : n.note;
+  const resolvedAt = formatResolvedAt(n.answered_at);
+
+  return (
+    <section className={`focus-result status-${n.status || 'closed'}`} aria-labelledby="focus-result-title">
+      <div className="focus-result-status">
+        <span className="focus-result-icon" aria-hidden="true">{status.icon}</span>
+        <div>
+          <div className="focus-result-eyebrow">Read-only card</div>
+          <h3 id="focus-result-title">{status.label}</h3>
+          <p>{status.detail}</p>
+        </div>
+      </div>
+      <dl className="focus-result-grid">
+        <div>
+          <dt>Response</dt>
+          <dd className={!hasAnswer ? 'unavailable' : ''}>{answerText}</dd>
+        </div>
+        <div>
+          <dt>Note</dt>
+          <dd className={!hasNote ? 'unavailable' : ''}>{noteText}</dd>
+        </div>
+        <div>
+          <dt>Resolved at</dt>
+          <dd className={!resolvedAt ? 'unavailable' : ''}>
+            {resolvedAt || 'Resolution time unavailable.'}
+          </dd>
+        </div>
+      </dl>
+    </section>
+  );
 }
 
 function normalizeChoices(choices) {
@@ -877,11 +1036,12 @@ function SnoozePicker({ n, onSnooze, onClose }) {
 
 // ── Focus shell ─────────────────────────────────────────────────────────
 
-function Focus({ n, nowMs, onClose, onAnswer, onDismiss, onSnooze }) {
+function Focus({ n, nowMs, canonicalUrl, onClose, onAnswer, onDismiss, onSnooze }) {
   const nn = normalizeNotif(n);
   const agent = window.AGENTS ? (window.AGENTS[nn.agent] || { glyph: '◐', name: nn.agent }) : { glyph: '◐', name: nn.agent };
   const Renderer = RENDERERS[nn.type] || AckRenderer;
   const color = window.agentColor ? window.agentColor(nn.agent) : '#C7F33D';
+  const isOpen = nn.status === 'open';
   const [snoozing, setSnoozing] = React.useState(false);
   const [note, setNote] = React.useState('');
   const [showNote, setShowNote] = React.useState(false);
@@ -892,6 +1052,7 @@ function Focus({ n, nowMs, onClose, onAnswer, onDismiss, onSnooze }) {
   React.useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') { if (snoozing) { setSnoozing(false); } else { onClose(); } }
+      if (!isOpen) return;
       if (!snoozing && e.key === 's' && !e.shiftKey) {
         // Don't trigger snooze if typing in an input/textarea
         const tag = e.target?.tagName;
@@ -912,13 +1073,20 @@ function Focus({ n, nowMs, onClose, onAnswer, onDismiss, onSnooze }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, snoozing, onDismiss]);
+  }, [isOpen, onClose, snoozing, onDismiss]);
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      setSnoozing(false);
+      setShowNote(false);
+    }
+  }, [isOpen]);
 
   React.useEffect(() => {
     if (showNote) noteRef.current?.focus();
   }, [showNote]);
 
-  if (snoozing) {
+  if (isOpen && snoozing) {
     return (
       <SnoozePicker
         n={n}
@@ -931,7 +1099,7 @@ function Focus({ n, nowMs, onClose, onAnswer, onDismiss, onSnooze }) {
   return (
     <>
       <div className="focus-backdrop" onClick={onClose} />
-      <div className="focus" style={{ '--agent': color }}>
+      <div className="focus" role="dialog" aria-modal="true" aria-label={`Notification ${nn.id}`} style={{ '--agent': color }}>
         <div className="focus-hd">
           <div className="glyph">{agent.glyph}</div>
           <div className="meta">
@@ -942,10 +1110,11 @@ function Focus({ n, nowMs, onClose, onAnswer, onDismiss, onSnooze }) {
               Urgency {nn.urgency}/5 · {nn.blocking ? 'Blocking' : 'Non-blocking'}
             </div>
           </div>
-          {nn.deadlineMs > 0 && <Countdown ms={nn.deadlineMs} urgent={nn.urgency >= 4} />}
-          <button className="close" onClick={onClose}>✕</button>
+          {isOpen && nn.deadlineMs > 0 && <Countdown ms={nn.deadlineMs} urgent={nn.urgency >= 4} />}
+          <button className="close" aria-label="Close card" onClick={onClose}>✕</button>
         </div>
         <div className="focus-body">
+          <CopyLinkControl url={canonicalUrl} />
           <h2 className="focus-q">{nn.question}</h2>
           {nn.detail_markdown ? (
             <div className="focus-detail-markdown">
@@ -961,36 +1130,42 @@ function Focus({ n, nowMs, onClose, onAnswer, onDismiss, onSnooze }) {
               ))}
             </p>
           ) : null}
-          <Renderer n={nn} onAnswer={handleAnswer} />
-          <div className="focus-actions">
-            <button className="dismiss-btn" onClick={onDismiss}>
-              <span className="k">d</span> Dismiss without reply
-            </button>
-          </div>
-          <div className="note-composer">
-            {showNote ? (
-              <>
-                <textarea
-                  ref={noteRef}
-                  className="note-area"
-                  placeholder="Optional note for the agent…"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') { e.preventDefault(); setShowNote(false); }
-                  }}
-                />
-                <div className="note-meta">
-                  <span>{note.length} chars</span>
-                  <button className="note-close" onClick={() => setShowNote(false)}>Hide note <span className="k">⇧N</span></button>
-                </div>
-              </>
-            ) : (
-              <button className="note-toggle" onClick={() => setShowNote(true)}>
-                <span>✎</span> Add note <span className="k">⇧N</span>
-              </button>
-            )}
-          </div>
+          {isOpen ? (
+            <>
+              <Renderer n={nn} onAnswer={handleAnswer} />
+              <div className="focus-actions">
+                <button className="dismiss-btn" onClick={onDismiss}>
+                  <span className="k">d</span> Dismiss without reply
+                </button>
+              </div>
+              <div className="note-composer">
+                {showNote ? (
+                  <>
+                    <textarea
+                      ref={noteRef}
+                      className="note-area"
+                      placeholder="Optional note for the agent…"
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') { e.preventDefault(); setShowNote(false); }
+                      }}
+                    />
+                    <div className="note-meta">
+                      <span>{note.length} chars</span>
+                      <button className="note-close" onClick={() => setShowNote(false)}>Hide note <span className="k">⇧N</span></button>
+                    </div>
+                  </>
+                ) : (
+                  <button className="note-toggle" onClick={() => setShowNote(true)}>
+                    <span>✎</span> Add note <span className="k">⇧N</span>
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <TerminalResult n={nn} />
+          )}
         </div>
       </div>
     </>
