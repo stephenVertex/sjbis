@@ -868,6 +868,7 @@ APPROVAL ASKS (transient authority)
   A timed_out result means NO approval. Never treat silence as consent.
 
   For the agent-side flow (ask, verify, relay, claim), run `ta prime`.
+  The Pi kiosk console (`<daemon>/console`) signs approvals via `ta console`.
 
 COMMON FLAGS
   --agent-name      Required. Identifies the calling agent.

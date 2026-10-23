@@ -288,6 +288,57 @@ for the reference tailnet host is:
 No Tailscale Serve state or other deployment infrastructure is changed by this
 repository update.
 
+## Console (Pi kiosk)
+
+`GET /console` (or `{base}/console` behind a path prefix) serves a minimal,
+framework-free page for a small landscape panel driven by a Stream Deck or
+keyboard: one open ask at a time, oldest first, in large type. It needs no
+internet (no CDN scripts or fonts) and sizes everything in viewport units, so
+1024x600 and 1920x1080 look the same. It loads `GET /list`, follows
+`GET /events` (reconnecting with backoff), and posts plain answers to
+`POST /answer/{id}` with `via: "console"`.
+
+| Key | Action |
+|---|---|
+| `Y` / `N` | yes / no (approval: approve / deny) |
+| `1`-`9`, `Enter` | select a choice, confirm it (tap a selected button to confirm) |
+| `T` | cycle grant TTL 10m / 1h / 24h (approval asks only; defaults to the ask's `ttl_secs` if it is one of those, else 1h) |
+| `M`, `Esc` | focus / leave the note field (free-text asks: type the answer, `Enter` sends) |
+| `S` / `D` | snooze 15 minutes (capped at the deadline) / dismiss |
+| `Left`/`Right`, `K`/`J` | previous / next ask |
+| `Up`/`Down`, `PgUp`/`PgDn` | scroll the detail box |
+| `R` | reload the queue and recheck the sidecar |
+
+Approval asks cannot be answered from the browser. The console delegates them
+to a local signing sidecar, `ta console`, at the `sidecar` query parameter
+(default `http://127.0.0.1:7879`, e.g. `/console?sidecar=http://127.0.0.1:7879`):
+
+- `GET {sidecar}/health` -> `200 {"ok":true,"signer":"<signer id>","daemon":"<daemon url>"}`.
+  Polled every 10 s; while it fails the console shows "signing sidecar
+  offline" and disables approval actions (snooze and dismiss still work).
+- `POST {sidecar}/approve` with
+  `{"ask_id":"<id>","decision":"approve"|"deny","answer":<string|null>,"note":<string|null>,"ttl_secs":<int>,"once":false}`.
+  `Y` approves (on an ask with choices, the selected choice's value is the
+  `answer`), `N` denies. Success is `200 {"id":"ta-xxxxxx","expires_at":"<RFC3339 Z>","decision":"approve"|"deny"}`
+  and the console shows the grant id large for a few seconds; failure is
+  `4xx/5xx {"error":"<message>","code":"<snake_case>"}`, shown on the card.
+  The sidecar posts the grant to the daemon, which answers the ask; the
+  console never POSTs `/answer` for an approval. The sidecar must send CORS
+  headers (the JSON POST is preflighted).
+
+Sample Chromium kiosk command on the Pi (which runs `ta console` as the sidecar):
+
+```bash
+chromium-browser --kiosk --noerrdialogs --disable-infobars \
+  --app=http://dertog.tailb4b58.ts.net:7878/console
+```
+
+Browser regression: serve the repository root over HTTP
+(`python3 -m http.server 8000`) and open
+`http://localhost:8000/tests/web/console-regression.html`; `body[data-regression]`
+becomes `passed` or `failed`. `focus-regression.html` and
+`triage-regression.html` in the same directory run the same way.
+
 ## Architecture
 
 ```
