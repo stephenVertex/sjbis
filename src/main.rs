@@ -374,6 +374,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         privacy: args.privacy.clone(),
         sub_questions,
         ttl_secs,
+        renews: None,
     };
 
     let resp = client

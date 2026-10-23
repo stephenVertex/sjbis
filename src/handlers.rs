@@ -192,6 +192,7 @@ pub async fn ask(
         note: None,
         sub_questions: req.sub_questions.clone(),
         ttl_secs,
+        renews: req.renews.clone(),
     };
 
     // Apply urgency from AI router if confidence is high

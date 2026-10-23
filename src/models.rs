@@ -249,6 +249,10 @@ pub struct Notification {
     /// Defaults to [`DEFAULT_APPROVAL_TTL_SECS`] for approval asks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<i64>,
+    /// Reauth: the ta grant id this approval ask re-proposes. A signing
+    /// device copies it into the signed record's `renews`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renews: Option<String>,
 }
 
 /// Default requested grant lifetime for an approval ask (1 hour).
@@ -398,6 +402,9 @@ pub struct AskRequest {
     /// Requested grant lifetime in seconds (approval asks). Must be > 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<i64>,
+    /// Reauth (ta): the grant id this ask re-proposes. Stored verbatim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renews: Option<String>,
 }
 
 /// Answer submitted by the user via dashboard
@@ -644,6 +651,34 @@ mod tests {
         assert_eq!(request.question_type, Some(QuestionType::Approval));
         assert_eq!(request.ttl_secs, Some(600));
         assert_eq!(request.choices.map(|c| c.len()), Some(2));
+    }
+
+    #[test]
+    fn renews_round_trips_through_ask_and_notification() {
+        let request: AskRequest = serde_json::from_value(json!({
+            "question": "Do you want to fire the missiles?",
+            "question_type": "approval",
+            "renews": "ta-3kp9ab"
+        }))
+        .expect("reauth ask should deserialize");
+        assert_eq!(request.renews.as_deref(), Some("ta-3kp9ab"));
+
+        let mut notif: Notification = serde_json::from_value(json!({
+            "id": "sjbis-x", "agent_name": "a", "sender": "a", "src": "a",
+            "question": "q", "question_type": "approval", "urgency": 2,
+            "blocking": true, "deadline": null, "reply_to": "stdout",
+            "status": "open", "created_at": "2026-10-23T00:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(notif.renews, None);
+        assert!(
+            serde_json::to_value(&notif)
+                .unwrap()
+                .get("renews")
+                .is_none()
+        );
+        notif.renews = request.renews;
+        assert_eq!(serde_json::to_value(&notif).unwrap()["renews"], "ta-3kp9ab");
     }
 
     #[test]
