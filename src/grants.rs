@@ -253,6 +253,7 @@ impl Decision {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GrantRecord {
     pub v: u64,
     pub ask_id: String,
@@ -269,6 +270,7 @@ pub struct GrantRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RevokeRecord {
     pub v: u64,
     pub target: String,
@@ -278,6 +280,7 @@ pub struct RevokeRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EnrollRecord {
     pub v: u64,
     pub signer_id: String,
@@ -288,8 +291,8 @@ pub struct EnrollRecord {
     pub signer: String,
 }
 
-/// A typed record. Unknown extra fields are tolerated (they are covered by
-/// the signature either way); missing required fields are malformed.
+/// A typed record. Unknown fields, missing required fields and `null`
+/// optionals are all malformed (matching ta-core).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Record {
@@ -1160,8 +1163,11 @@ mod tests {
             fixture["registry"]["signers_toml"].as_str().unwrap(),
             FIXTURE_SIGNERS
         );
+        let verify_at = parse_timestamp(fixture["verify_at"].as_str().unwrap()).unwrap();
+        assert_eq!(format_timestamp(verify_at), "2026-10-23T01:25:00Z");
         let cases = fixture["cases"].as_array().unwrap();
         assert!(cases.len() >= 3);
+        let mut names = Vec::new();
         for case in cases {
             let name = case["name"].as_str().unwrap();
             let env = &case["envelope"];
@@ -1184,6 +1190,64 @@ mod tests {
                 *env,
                 "{name}: round-trip"
             );
+            // Expiry evaluated at the fixture's fixed verify_at.
+            let expect = &case["expect_at_verify_at"];
+            let status = StoredGrant::from_verified(&v, verify_at).status_at(verify_at);
+            assert!(!status.expired, "{name}: not expired at verify_at");
+            match (expect["verdict"].as_str().unwrap(), v.record()) {
+                ("valid", Record::Grant(g)) => assert_eq!(g.decision, Decision::Approve, "{name}"),
+                ("denied", Record::Grant(g)) => assert_eq!(g.decision, Decision::Deny, "{name}"),
+                ("valid", _) => {}
+                (verdict, rec) => panic!("{name}: unexpected verdict {verdict} for {}", rec.kind()),
+            }
+            if let (Some(q), Record::Grant(g)) = (expect["question"].as_str(), v.record()) {
+                assert_eq!(g.question.as_bytes(), q.as_bytes(), "{name}: question");
+            }
+            names.push(name.to_string());
+        }
+        for want in ["approve", "deny", "revoke"] {
+            assert!(
+                names.iter().any(|n| n == want),
+                "fixture case {want} missing"
+            );
+        }
+        // One second past the deny grant's expiry it reads as expired.
+        let deny = cases.iter().find(|c| c["name"] == "deny").unwrap();
+        let v = verify_envelope(&deny["envelope"], &reg).unwrap();
+        let stored = StoredGrant::from_verified(&v, verify_at);
+        assert!(
+            stored
+                .status_at(parse_timestamp("2026-10-23T01:30:00Z").unwrap())
+                .expired
+        );
+    }
+
+    #[test]
+    fn ta_fixture_high_s_twin_verifies() {
+        let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+        let reg = Registry::parse(FIXTURE_SIGNERS).unwrap();
+        let variants = fixture["signature_variants"].as_array().unwrap();
+        assert!(!variants.is_empty());
+        for case in variants {
+            let name = case["name"].as_str().unwrap();
+            let v =
+                verify_envelope(&case["envelope"], &reg).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(v.envelope.id, "ta-ucfuud", "{name}: same id as approve");
+        }
+    }
+
+    #[test]
+    fn ta_fixture_record_with_unknown_field_is_malformed() {
+        let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+        let reg = Registry::parse(FIXTURE_SIGNERS).unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let mut env = case["envelope"].clone();
+            env["record"]["extra"] = json!("x");
+            let canonical = canonical_bytes(&env["record"]).unwrap();
+            env["record_sha256"] = json!(record_sha256(&canonical));
+            env["id"] = json!(grant_id(&canonical));
+            let err = verify_envelope(&env, &reg).unwrap_err();
+            assert_eq!(err.code(), "malformed", "{}: {err}", case["name"]);
         }
     }
 
