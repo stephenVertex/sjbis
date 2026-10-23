@@ -85,6 +85,7 @@
     if (id === S.cur) return;
     S.cur = id; S.sel = null; setMsg('');
     noteEl.value = '';
+    if (document.activeElement === noteEl) noteEl.blur(); // focus never carries over to the next ask
     var n = current(), t = n && n.ttl_secs;
     S.ttlIdx = 1;
     TTLS.forEach(function (p, i) { if (p[0] === t) S.ttlIdx = i; });
@@ -329,9 +330,13 @@
   var KEYS = { y: 'yes', n: 'no', enter: 'confirm', t: 'ttl', m: 'note', s: 'snooze', d: 'dismiss',
     arrowleft: 'prev', k: 'prev', arrowright: 'next', j: 'next', r: 'reload' };
   document.addEventListener('keydown', function (e) {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // Ctrl+Alt+<key> is a "hard" key (the Stream Deck sends these): it acts
+    // even while the note field has focus. Any other modifier is ignored.
+    var hard = e.ctrlKey && e.altKey && !e.metaKey;
+    if ((e.ctrlKey || e.metaKey || e.altKey) && !hard) return;
     var key = (e.key || '').toLowerCase();
     if (S.grant) { e.preventDefault(); closeGrant(); return; }
+    if (hard && e.target === noteEl) noteEl.blur();
     if (e.target === noteEl) {
       if (key === 'escape') { noteEl.blur(); e.preventDefault(); }
       if (key === 'enter') {
