@@ -74,6 +74,12 @@ pub fn evaluate(rules: &[Rule], mut notif: Notification) -> (Notification, Optio
         }
     }
 
+    // Approval asks can only be answered by a signed grant: no rule may
+    // auto-answer one, whatever it matched.
+    if notif.question_type == QuestionType::Approval {
+        auto_answer = None;
+    }
+
     (notif, auto_answer)
 }
 
@@ -593,4 +599,57 @@ pub fn compile_allow_list(
         .collect();
 
     Some((mute_compiled, surface_rules))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn notification(question_type: &str) -> Notification {
+        serde_json::from_value(json!({
+            "id": "sjbis-test0001",
+            "agent_name": "deploybot",
+            "sender": "deploybot",
+            "src": "deploybot",
+            "question": "Deploy?",
+            "question_type": question_type,
+            "urgency": 2,
+            "blocking": true,
+            "deadline": null,
+            "reply_to": "stdout",
+            "status": "open",
+            "created_at": "2026-10-23T00:00:00Z"
+        }))
+        .expect("test notification should deserialize")
+    }
+
+    fn auto_yes_rule() -> Rule {
+        Rule {
+            id: "r-test".to_string(),
+            text: "auto-answer deploybot yes".to_string(),
+            compiled: Some(json!({"match": {"agent": "deploybot"}, "action": "auto_answer:yes"})),
+            active: true,
+            scope: None,
+            urgency_min: 0,
+            mute: false,
+            priority: 10,
+            expires_at: None,
+            active_window: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn auto_answer_rule_applies_to_ordinary_asks() {
+        let (_, answer) = evaluate(&[auto_yes_rule()], notification("yesno"));
+        assert_eq!(answer.as_deref(), Some("yes"));
+    }
+
+    #[test]
+    fn auto_answer_rule_never_answers_an_approval() {
+        let (notif, answer) = evaluate(&[auto_yes_rule()], notification("approval"));
+        assert_eq!(answer, None);
+        assert_eq!(notif.status, NotificationStatus::Open);
+    }
 }
