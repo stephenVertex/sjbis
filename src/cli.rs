@@ -299,6 +299,17 @@ pub struct AskArgs {
     /// Answer shape: schedule slot
     #[arg(long)]
     pub schedule: Option<String>,
+    /// Answer shape: transient-authority approval. Answerable only by a signed
+    /// grant from a trusted device (the dashboard shows a locked card).
+    /// May carry --choices. Implies --blocking.
+    #[arg(
+        long,
+        conflicts_with_all = ["yesno", "text", "number", "file", "diff", "ack", "pick", "schedule", "form", "guess_renderer"]
+    )]
+    pub approval: bool,
+    /// Requested grant lifetime for --approval: duration (10m, 1h, 1d). Default 1h.
+    #[arg(long, requires = "approval")]
+    pub ttl: Option<String>,
     /// Let the AI guess the renderer
     #[arg(long)]
     pub guess_renderer: bool,
@@ -373,6 +384,7 @@ pub struct AskArgs {
 impl AskArgs {
     pub fn question_type(&self) -> Option<crate::models::QuestionType> {
         use crate::models::QuestionType;
+        if self.approval { return Some(QuestionType::Approval); }
         if self.form.is_some() { return Some(QuestionType::Form); }
         if self.yesno { return Some(QuestionType::YesNo); }
         if self.choices.is_some() { return Some(QuestionType::Multichoice); }
@@ -386,6 +398,27 @@ impl AskArgs {
         if self.guess_renderer { return None; }
         // Default: if no shape given and not guessing, treat as ack
         Some(QuestionType::Ack)
+    }
+
+    /// Whether the caller blocks: --approval always blocks (an approval ask
+    /// is only useful if the caller waits for the grant).
+    pub fn effective_blocking(&self) -> bool {
+        self.blocking || self.approval
+    }
+
+    /// `--ttl` in whole seconds, parsed with the same duration parser as
+    /// `--deadline`. Must be positive.
+    pub fn ttl_secs(&self) -> anyhow::Result<Option<i64>> {
+        let Some(raw) = self.ttl.as_deref() else {
+            return Ok(None);
+        };
+        let secs = crate::models::parse_duration(raw)
+            .with_context(|| format!("invalid --ttl {raw:?}; use e.g. 10m, 1h, 1d"))?
+            .num_seconds();
+        if secs <= 0 {
+            anyhow::bail!("--ttl must be positive (got {raw:?})");
+        }
+        Ok(Some(secs))
     }
 }
 
@@ -470,6 +503,45 @@ mod tests {
             };
             assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
         }
+    }
+
+    fn parse_ask(extra: &[&str]) -> Result<AskArgs, clap::Error> {
+        let mut argv = vec!["sjbis", "ask", "--question", "Deploy?", "--agent-name", "demo"];
+        argv.extend_from_slice(extra);
+        Cli::try_parse_from(argv).map(|cli| match cli.command {
+            Commands::Ask(args) => args,
+            _ => panic!("expected ask command"),
+        })
+    }
+
+    #[test]
+    fn ask_approval_implies_blocking_and_parses_ttl_and_choices() {
+        use crate::models::QuestionType;
+        let args = parse_ask(&["--approval", "--ttl", "1h", "--choices", "a,b,c"])
+            .expect("approval with ttl and choices should parse");
+        assert_eq!(args.question_type(), Some(QuestionType::Approval));
+        assert!(!args.blocking);
+        assert!(args.effective_blocking());
+        assert_eq!(args.ttl_secs().unwrap(), Some(3600));
+
+        let args = parse_ask(&["--approval"]).unwrap();
+        assert_eq!(args.ttl_secs().unwrap(), None);
+
+        let args = parse_ask(&["--yesno"]).unwrap();
+        assert!(!args.effective_blocking());
+    }
+
+    #[test]
+    fn ask_ttl_validation() {
+        for bad in ["0s", "-5m", "soon", "1"] {
+            let flag = format!("--ttl={bad}");
+            let args = parse_ask(&["--approval", &flag]).unwrap();
+            assert!(args.ttl_secs().is_err(), "--ttl {bad} should be rejected");
+        }
+        let err = parse_ask(&["--ttl", "1h"]).err().expect("--ttl requires --approval");
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+        let err = parse_ask(&["--approval", "--yesno"]).err().expect("shapes conflict");
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
     #[test]

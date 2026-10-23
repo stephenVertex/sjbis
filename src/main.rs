@@ -338,6 +338,10 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         None
     };
 
+    // --approval implies --blocking; --ttl is validated before posting.
+    let blocking = args.effective_blocking();
+    let ttl_secs = args.ttl_secs()?;
+
     let req = AskRequest {
         question: content.question,
         agent_name: args.agent_name.clone(),
@@ -345,7 +349,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         detail: content.detail,
         detail_markdown: content.detail_markdown,
         urgency: args.urgency,
-        blocking: args.blocking,
+        blocking,
         deadline: args.deadline.clone(),
         reply_to: args.reply_to.clone(),
         id: args.id.clone(),
@@ -368,7 +372,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         mute_key: args.mute_key.clone(),
         privacy: args.privacy.clone(),
         sub_questions,
-        ttl_secs: None,
+        ttl_secs,
     };
 
     let resp = client
@@ -385,7 +389,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
 
     let notif: Notification = resp.json().await.context("failed to parse daemon response")?;
 
-    if args.blocking {
+    if blocking {
         // Blocking mode: the daemon returns when answered OR when the
         // --deadline is reached (structured timed_out envelope).
         // Progress goes to stderr so --json stdout stays pure JSON.
@@ -393,6 +397,8 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         let answer = wait_for_answer(&client, &url, &notif.id).await?;
         if args.json {
             println!("{}", serde_json::to_string_pretty(&answer)?);
+        } else if answer.via == "timed_out" && notif.question_type == QuestionType::Approval {
+            println!("(timed out — no grant; an approval timeout carries no authority)");
         } else if answer.via == "timed_out" {
             println!("(timed out — no answer before deadline)");
         } else {
