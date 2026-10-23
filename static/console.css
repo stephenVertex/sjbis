@@ -1,0 +1,62 @@
+/* SJBIS console: every size is in viewport units so a 1024x600 panel and a
+   1920x1080 monitor render the same layout. Nothing below ~2.5vh. */
+:root {
+  --bg: #0b0c0f; --panel: #16181d; --line: #3a3d46;
+  --fg: #f4f3ee; --dim: #b9bab3; --ok: #c7f33d; --warn: #ffb341; --bad: #ff4f8b;
+  --mono: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+  font-family: system-ui, -apple-system, "DejaVu Sans", "Liberation Sans", sans-serif; }
+#console { display: flex; flex-direction: column; gap: 1.4vh; height: 100vh; padding: 1.5vh 2vw; }
+.hdr { flex: none; display: flex; align-items: center; gap: 2.5vw; font-size: 3vh; color: var(--dim); white-space: nowrap; }
+.hdr .pos { color: var(--fg); font-weight: 700; }
+.hdr .sp { flex: 1; }
+.dot::before { content: ""; display: inline-block; width: 1.6vh; height: 1.6vh; margin-right: 0.8vh;
+  border-radius: 50%; background: currentColor; vertical-align: middle; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.card { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1.4vh; }
+.meta { font-size: 3vh; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta b { color: var(--fg); }
+.urg { padding: 0 1vh; border-radius: 0.6vh; background: var(--line); color: var(--fg); }
+.urg.hot { background: var(--bad); color: #000; }
+.q { margin: 0; font-size: 6vh; line-height: 1.15; font-weight: 700; max-height: 22vh; overflow: auto; }
+.q.long { font-size: 4.4vh; }
+.detail { flex: 1; min-height: 8vh; overflow: auto; padding: 1.2vh 2vw; font-size: 3.2vh; line-height: 1.35;
+  background: var(--panel); border: 0.25vh solid var(--line); border-radius: 1vh; }
+.detail.plain { white-space: pre-wrap; }
+.detail h2 { font-size: 4vh; margin: 0.6vh 0; } .detail h3 { font-size: 3.6vh; margin: 0.6vh 0; }
+.detail h4 { font-size: 3.2vh; margin: 0.6vh 0; }
+.detail p, .detail ul, .detail pre { margin: 0 0 1vh; }
+.detail ul { padding-left: 4vh; }
+.detail code, .detail pre { font-family: var(--mono); background: #000; border-radius: 0.5vh; padding: 0 0.6vh; }
+.detail pre { padding: 1vh; white-space: pre-wrap; }
+.spacer { flex: 1; }
+.lock { flex: none; font-size: 3.4vh; font-weight: 700; }
+.row { flex: none; display: flex; flex-wrap: wrap; gap: 1.2vh 1.2vw; }
+button { flex: 1 1 0; min-width: 12vw; min-height: 9vh; display: flex; align-items: center; justify-content: center;
+  gap: 1vw; padding: 1vh 1.4vw; font: inherit; font-size: 3.6vh; color: var(--fg); cursor: pointer;
+  background: var(--panel); border: 0.3vh solid var(--line); border-radius: 1.2vh; }
+button .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button kbd { white-space: nowrap; font-family: var(--mono); font-size: 2.8vh; padding: 0 0.8vh; border: 0.2vh solid currentColor;
+  border-radius: 0.6vh; opacity: 0.85; }
+button.yes { border-color: var(--ok); } button.no { border-color: var(--bad); }
+button.sel { background: var(--ok); color: #000; border-color: var(--ok); }
+button:disabled { opacity: 0.35; cursor: default; }
+.tools button { flex: 1 1 auto; min-width: 0; min-height: 7vh; font-size: 3vh; }
+.noterow { flex: none; display: flex; }
+.noterow[hidden] { display: none; }
+.noterow input { flex: 1; min-width: 0; height: 7vh; padding: 0 1.4vw; font: inherit; font-size: 3.2vh; color: var(--fg);
+  background: var(--panel); border: 0.3vh solid var(--line); border-radius: 1.2vh; }
+.noterow input:focus { outline: none; border-color: var(--ok); }
+.msg { flex: none; min-height: 3.6vh; font-size: 3vh; }
+.empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3vh; }
+.empty .clock { font-size: 22vh; font-weight: 200; font-variant-numeric: tabular-nums; }
+.empty .calm { font-size: 5vh; color: var(--dim); }
+.grant { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 3vh; background: var(--bg); }
+.grant .gid { font-family: var(--mono); font-size: 20vh; font-weight: 700; color: var(--ok); }
+.grant.deny .gid { color: var(--bad); }
+.grant .sub { font-size: 5vh; }
+.grant .hint { font-size: 3vh; color: var(--dim); }
+.empty .ok { color: var(--ok); } .empty .warn { color: var(--warn); }

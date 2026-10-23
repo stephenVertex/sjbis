@@ -118,7 +118,9 @@ where
     S: Clone + Send + Sync + 'static,
 {
     let index = static_dir.join("index.html");
+    let console = static_dir.join("console.html");
     Router::new()
+        .route_service("/console", get_service(ServeFile::new(console)))
         .route_service("/", get_service(ServeFile::new(index.clone())))
         .route_service("/index.html", get_service(ServeFile::new(index.clone())))
         .route_service(
@@ -339,6 +341,41 @@ mod tests {
             request(app, Method::GET, "/card/sjbis-example").await.0,
             StatusCode::NOT_FOUND,
         );
+    }
+
+    #[tokio::test]
+    async fn console_route_serves_the_kiosk_page_at_root_and_under_a_prefix() {
+        for (base, uri) in [
+            ("/", "/console"),
+            ("/", "/console.html"),
+            ("/sjbis/", "/sjbis/console"),
+        ] {
+            let response = test_app(base)
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let content_type = response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .to_string();
+            assert!(
+                content_type.starts_with("text/html"),
+                "{uri}: {content_type}"
+            );
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert!(
+                String::from_utf8_lossy(&body).contains("sjbis-console"),
+                "{uri}"
+            );
+        }
+        for asset in ["/console.js", "/console.css"] {
+            assert_eq!(
+                request(test_app("/"), Method::GET, asset).await.0,
+                StatusCode::OK,
+                "{asset}"
+            );
+        }
     }
 
     #[test]

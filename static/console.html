@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<!-- sjbis-console: single-ask kiosk console (Pi + Stream Deck). No framework, no network deps. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<title>SJBIS · Console</title>
+<script>
+// Resolve the daemon base path (e.g. /sjbis) from /console or /console.html.
+(function () {
+  var basePath = window.location.pathname.replace(/\/console(\.html)?\/?$/, '').replace(/\/+$/, '');
+  window.__SJBIS_BASE_PATH__ = basePath;
+  var base = document.createElement('base');
+  base.href = basePath + '/';
+  document.head.appendChild(base);
+})();
+</script>
+<link rel="stylesheet" href="console.css" />
+</head>
+<body>
+<div id="console"></div>
+<script src="time.js"></script>
+<script src="console.js"></script>
+</body>
+</html>
