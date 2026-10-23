@@ -13,7 +13,7 @@ pub struct Db {
 
 // Explicit column list to avoid PostgreSQL "cached plan must not change result type"
 // errors when columns are added via migrations.
-const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note, sub_questions, ttl_secs, renews";
+const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note, sub_questions, ttl_secs, renews, once";
 
 const GRANT_COLS: &str = "id, kind, notification_id, record, record_sha256, sig, signer, issued_at, expires_at, renews, revoked_by, claimed_by, claimed_at, created_at";
 
@@ -57,10 +57,10 @@ impl Db {
                 created_at, answered_at, answer, answer_label,
                 choices, yes_label, no_label, placeholder, suggestions,
                 min, max, step, default_value, unit, accept, diff, ack_label,
-                items, slots, mute_key, caller_id, sub_questions, ttl_secs, renews
+                items, slots, mute_key, caller_id, sub_questions, ttl_secs, renews, once
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
                       $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
-                      $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)"#,
+                      $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)"#,
         )
         .bind(&n.id)
         .bind(&n.agent_name)
@@ -100,6 +100,7 @@ impl Db {
         .bind(sub_questions)
         .bind(n.ttl_secs)
         .bind(&n.renews)
+        .bind(n.once)
         .execute(&self.pool)
         .await?;
 
@@ -660,6 +661,7 @@ impl Db {
             sub_questions,
             ttl_secs: row.try_get::<Option<i64>, _>("ttl_secs").ok().flatten(),
             renews: row.try_get::<Option<String>, _>("renews").ok().flatten(),
+            once: row.try_get::<Option<bool>, _>("once").ok().flatten(),
         })
     }
 

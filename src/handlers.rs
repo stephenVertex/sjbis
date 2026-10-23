@@ -125,6 +125,9 @@ pub async fn ask(
         )
     })?;
 
+    // `once` (single-use grant) is only meaningful on approval asks.
+    let once = check_once(&question_type, req.once)?;
+
     // Parse deadline
     let deadline = req.deadline.as_ref().and_then(|d| {
         parse_deadline(d).ok()
@@ -193,6 +196,7 @@ pub async fn ask(
         sub_questions: req.sub_questions.clone(),
         ttl_secs,
         renews: req.renews.clone(),
+        once,
     };
 
     // Apply urgency from AI router if confidence is high
@@ -229,6 +233,7 @@ pub async fn ask(
             via: "rule_auto_answer".to_string(),
             note: None,
             grant: None,
+            once: notification.once,
         };
         state.broadcaster.broadcast(&SseEvent::NotificationAnswered { envelope });
         return Ok(Json(notification));
@@ -259,6 +264,20 @@ pub const APPROVAL_PLAIN_ANSWER_ERROR: &str =
 
 /// Decide whether a plain `POST /answer/{id}` may answer `notif`.
 ///
+/// Resolve an ask's `once` flag, mapping a misuse (`once: true` on a
+/// non-approval ask) to 422 `{"error", "code": "once_requires_approval"}`.
+pub fn check_once(
+    question_type: &QuestionType,
+    once: Option<bool>,
+) -> Result<Option<bool>, (StatusCode, Json<serde_json::Value>)> {
+    resolve_once(question_type, once).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": e, "code": "once_requires_approval" })),
+        )
+    })
+}
+
 /// Closed notifications are rejected with 409 as before. Approval asks are
 /// also rejected with 409: only a signed grant (POST /grants) may answer them,
 /// so neither the dashboard nor `sjbis answer --via caller-timeout` can.
@@ -312,6 +331,7 @@ pub async fn answer(
         via: req.via.unwrap_or_else(|| "dashboard".to_string()),
         note: updated.note.clone(),
         grant: None,
+        once: updated.once,
     };
 
     // Notify any blocking waiters
@@ -381,6 +401,7 @@ pub async fn dismiss(
         via: "dismissed".to_string(),
         note: None,
         grant: None,
+        once: notif.once,
     };
 
     // Signal any blocking waiters so they return immediately
@@ -775,6 +796,7 @@ pub async fn wait_for_answer(
                     via: "dashboard".to_string(),
                     note: notif.note.clone(),
                     grant: None,
+                    once: notif.once,
                 };
                 // An answered approval ask was answered by a signed grant:
                 // hand the waiter the envelope and via = "ta:<signer>".
@@ -795,6 +817,7 @@ pub async fn wait_for_answer(
                     via: format!("{:?}", notif.status).to_lowercase(),
                     note: None,
                     grant: None,
+                    once: notif.once,
                 };
                 return Ok(Json(envelope));
             }
@@ -855,6 +878,7 @@ pub async fn wait_for_answer(
                 via: "timed_out".to_string(),
                 note: None,
                 grant: None,
+                once: notif.as_ref().and_then(|n| n.once),
             };
             state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
             Ok(Json(envelope))
@@ -1013,6 +1037,35 @@ mod tests {
             err.1.0,
             serde_json::json!({"error": "approval asks can only be answered by a signed grant"})
         );
+    }
+
+    #[test]
+    fn once_on_non_approval_is_422_with_code() {
+        let err = check_once(&QuestionType::YesNo, Some(true))
+            .expect_err("once: true needs an approval ask");
+        assert_eq!(err.0, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(err.1.0["code"], "once_requires_approval");
+        assert!(err.1.0["error"].as_str().unwrap().contains("approval"));
+
+        assert_eq!(check_once(&QuestionType::YesNo, Some(false)).unwrap(), None);
+        assert_eq!(check_once(&QuestionType::Ack, None).unwrap(), None);
+        assert_eq!(
+            check_once(&QuestionType::Approval, Some(true)).unwrap(),
+            Some(true)
+        );
+        assert_eq!(check_once(&QuestionType::Approval, None).unwrap(), None);
+    }
+
+    #[test]
+    fn once_round_trips_on_approval_notification() {
+        let mut n = notification("approval", "open");
+        assert_eq!(n.once, None);
+        assert!(serde_json::to_value(&n).unwrap().get("once").is_none());
+        n.once = Some(true);
+        let value = serde_json::to_value(&n).unwrap();
+        assert_eq!(value["once"], true);
+        let back: Notification = serde_json::from_value(value).unwrap();
+        assert_eq!(back.once, Some(true));
     }
 
     #[test]

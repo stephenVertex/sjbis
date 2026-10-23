@@ -376,6 +376,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         sub_questions,
         ttl_secs,
         renews: None,
+        once: args.once.then_some(true),
     };
 
     let resp = client
@@ -856,6 +857,7 @@ APPROVAL ASKS (transient authority)
   --approval        Implies --blocking. May carry --choices "a,b,c".
   --ttl 1h          Requested grant lifetime (same syntax as --deadline:
                     10m, 1h, 1d). Default 1h. Must be > 0. Needs --approval.
+  --once            Request a single-use grant (HTTP `once: true`). Needs --approval.
 
   Lock rule: an approval ask can only be answered by a signed grant from
   a trusted device (iPhone Face ID, Mac Touch ID, Pi console YubiKey).

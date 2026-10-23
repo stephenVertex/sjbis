@@ -317,7 +317,7 @@ to a local signing sidecar, `ta console`, at the `sidecar` query parameter
   Polled every 10 s; while it fails the console shows "signing sidecar
   offline" and disables approval actions (snooze and dismiss still work).
 - `POST {sidecar}/approve` with
-  `{"ask_id":"<id>","decision":"approve"|"deny","answer":<string|null>,"note":<string|null>,"ttl_secs":<int>,"once":false}`.
+  `{"ask_id":"<id>","decision":"approve"|"deny","answer":<string|null>,"note":<string|null>,"ttl_secs":<int>,"once":<bool>}` (`once` is the ask's `once`, default `false`).
   `Y` approves (on an ask with choices, the selected choice's value is the
   `answer`), `N` denies. Success is `200 {"id":"ta-xxxxxx","expires_at":"<RFC3339 Z>","decision":"approve"|"deny"}`
   and the console shows the grant id large for a few seconds; failure is
@@ -687,6 +687,7 @@ res=$(sjbis ask --approval --ttl 1h --question "Deploy to prod?" \
 - `--ttl` is the grant lifetime the agent requests (same duration syntax as
   `--deadline`: `10m`, `1h`, `1d`; default `1h`). It must be positive and
   requires `--approval`. Over HTTP it is `ttl_secs`; `ttl_secs <= 0` is a 400.
+- `--once` requests a single-use grant (HTTP `once: true`, stored and echoed on the notification and wait envelope); `once: true` on a non-approval ask is a 422 `once_requires_approval`.
 - **Lock rule:** an approval ask can only be answered by a signed grant from a
   trusted device. A plain `POST /answer/{id}` (dashboard, `sjbis answer`,
   including `--via caller-timeout`) returns `409` with

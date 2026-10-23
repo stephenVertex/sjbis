@@ -587,6 +587,7 @@ pub fn grant_answer_envelope(
         via: a.via,
         note: a.note,
         grant: Some(serde_json::to_value(envelope).unwrap_or(Value::Null)),
+        once: notif.once,
     }
 }
 
@@ -1431,6 +1432,7 @@ mod tests {
             via: "dashboard".into(),
             note: None,
             grant: None,
+            once: None,
         };
         stored.attach_to_answer(&mut ae);
         assert_eq!(ae.via, "ta:test@unit");

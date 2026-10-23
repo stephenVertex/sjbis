@@ -253,6 +253,10 @@ pub struct Notification {
     /// device copies it into the signed record's `renews`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renews: Option<String>,
+    /// Single-use grant requested (approval asks only). A signing device
+    /// copies it into the signed record's `once`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub once: Option<bool>,
 }
 
 /// Default requested grant lifetime for an approval ask (1 hour).
@@ -289,6 +293,9 @@ pub struct AnswerEnvelope {
     /// answered by a signed grant. Nothing sets this yet (see the grants bead).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<serde_json::Value>,
+    /// The ask's single-use flag (approval asks that set `once`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub once: Option<bool>,
 }
 
 /// Rule compiled from natural language or written directly as JSON
@@ -405,6 +412,10 @@ pub struct AskRequest {
     /// Reauth (ta): the grant id this ask re-proposes. Stored verbatim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub renews: Option<String>,
+    /// Request a single-use grant (approval asks only; `true` on any other
+    /// question type is a 422).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub once: Option<bool>,
 }
 
 /// Answer submitted by the user via dashboard
@@ -513,6 +524,24 @@ pub fn resolve_ttl_secs(
         Some(t) => Ok(Some(t)),
         None if *question_type == QuestionType::Approval => Ok(Some(DEFAULT_APPROVAL_TTL_SECS)),
         None => Ok(None),
+    }
+}
+
+/// Resolve the single-use flag for an ask.
+///
+/// `once` is only meaningful on approval asks: `once: true` on any other
+/// question type is an error, `once: false` there is dropped, and an approval
+/// ask keeps whatever the caller sent (absent means reusable).
+pub fn resolve_once(
+    question_type: &QuestionType,
+    once: Option<bool>,
+) -> Result<Option<bool>, String> {
+    match (question_type, once) {
+        (QuestionType::Approval, once) => Ok(once),
+        (_, Some(true)) => Err(format!(
+            "once is only valid on approval asks (question_type is {question_type})"
+        )),
+        (_, _) => Ok(None),
     }
 }
 
@@ -682,6 +711,47 @@ mod tests {
     }
 
     #[test]
+    fn ask_request_accepts_once_and_omits_it_when_absent() {
+        let request: AskRequest = serde_json::from_value(json!({
+            "question": "Do you want to fire the missiles?",
+            "question_type": "approval",
+            "ttl_secs": 600,
+            "once": true
+        }))
+        .expect("single-use approval ask should deserialize");
+        assert_eq!(request.once, Some(true));
+        assert_eq!(serde_json::to_value(&request).unwrap()["once"], true);
+
+        let request: AskRequest = serde_json::from_value(json!({
+            "question": "q", "question_type": "approval"
+        }))
+        .unwrap();
+        assert_eq!(request.once, None);
+        assert!(
+            serde_json::to_value(&request)
+                .unwrap()
+                .get("once")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn resolve_once_is_approval_only() {
+        assert_eq!(
+            resolve_once(&QuestionType::Approval, Some(true)),
+            Ok(Some(true))
+        );
+        assert_eq!(
+            resolve_once(&QuestionType::Approval, Some(false)),
+            Ok(Some(false))
+        );
+        assert_eq!(resolve_once(&QuestionType::Approval, None), Ok(None));
+        assert!(resolve_once(&QuestionType::YesNo, Some(true)).is_err());
+        assert_eq!(resolve_once(&QuestionType::YesNo, Some(false)), Ok(None));
+        assert_eq!(resolve_once(&QuestionType::FreeText, None), Ok(None));
+    }
+
+    #[test]
     fn resolve_ttl_secs_defaults_and_validates() {
         assert_eq!(
             resolve_ttl_secs(&QuestionType::Approval, None),
@@ -724,13 +794,18 @@ mod tests {
             via: "timed_out".to_string(),
             note: None,
             grant: None,
+            once: None,
         };
         let value = serde_json::to_value(&envelope).unwrap();
         assert!(value.get("grant").is_none());
+        assert!(value.get("once").is_none());
 
         envelope.grant = Some(json!({"id": "ta-7f3k2q"}));
         let value = serde_json::to_value(&envelope).unwrap();
         assert_eq!(value["grant"]["id"], "ta-7f3k2q");
+
+        envelope.once = Some(true);
+        assert_eq!(serde_json::to_value(&envelope).unwrap()["once"], true);
     }
 
     #[test]

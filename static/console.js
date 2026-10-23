@@ -183,7 +183,7 @@
   }
   function approve(n, decision, value) {
     if (!S.sidecarUp) { setMsg('signing sidecar offline: ' + S.sidecarWhy, 'bad'); render(); return; }
-    var body = { ask_id: n.id, decision: decision, answer: value == null ? null : value, note: note(), ttl_secs: TTLS[S.ttlIdx][0], once: false };
+    var body = { ask_id: n.id, decision: decision, answer: value == null ? null : value, note: note(), ttl_secs: TTLS[S.ttlIdx][0], once: n.once === true };
     return run(post(SIDECAR + '/approve', body).then(function (g) {
       S.grant = { id: g.id, expires_at: g.expires_at, decision: g.decision || decision };
       removeAsk(n.id);
@@ -273,7 +273,7 @@
     else h.push('<div class="spacer"></div>');
     if (appr) {
       h.push(down ? '<div class="lock bad">🔒 signing sidecar offline: approvals disabled (' + esc(S.sidecarWhy) + ')</div>'
-        : '<div class="lock warn">🔒 signed approval · signer ' + esc(S.signer) + '</div>');
+        : '<div class="lock warn">🔒 signed approval · signer ' + esc(S.signer) + (n.once ? ' · single-use' : '') + '</div>');
     }
     var row = [];
     opts.slice(0, 9).forEach(function (o, i) {

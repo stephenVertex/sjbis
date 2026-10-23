@@ -310,6 +310,9 @@ pub struct AskArgs {
     /// Requested grant lifetime for --approval: duration (10m, 1h, 1d). Default 1h.
     #[arg(long, requires = "approval")]
     pub ttl: Option<String>,
+    /// Request a single-use grant for --approval (claimable once).
+    #[arg(long, requires = "approval")]
+    pub once: bool,
     /// Let the AI guess the renderer
     #[arg(long)]
     pub guess_renderer: bool,
@@ -533,6 +536,10 @@ mod tests {
 
         let args = parse_ask(&["--approval"]).unwrap();
         assert_eq!(args.ttl_secs().unwrap(), None);
+        assert!(!args.once);
+
+        let args = parse_ask(&["--approval", "--once"]).unwrap();
+        assert!(args.once);
 
         let args = parse_ask(&["--yesno"]).unwrap();
         assert!(!args.effective_blocking());
@@ -548,6 +555,10 @@ mod tests {
         let err = parse_ask(&["--ttl", "1h"])
             .err()
             .expect("--ttl requires --approval");
+        assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
+        let err = parse_ask(&["--once"])
+            .err()
+            .expect("--once requires --approval");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
         let err = parse_ask(&["--approval", "--yesno"])
             .err()

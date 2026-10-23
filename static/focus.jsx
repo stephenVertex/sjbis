@@ -945,7 +945,7 @@ function ApprovalRenderer({ n, nowMs }) {
   return (
     <div className="approval-locked" aria-label="Locked approval">
       <div className="approval-badge">
-        <span className="approval-lock" aria-hidden="true">🔒</span> Locked · signed approval required
+        <span className="approval-lock" aria-hidden="true">🔒</span> Locked · signed approval required{n.once ? ' · single-use' : ''}
       </div>
       <dl className="approval-facts">
         <dt>Requested by</dt>
