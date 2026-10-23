@@ -1,0 +1,6 @@
+[[signer]]
+id = "dev@fixtures"
+method = "software"
+device = "ta-core fixture key (throwaway, committed, never trust in production)"
+pubkey = "BO+oCq28nf9JtALLtH0cDOZXBw2FHWYTvJk8zV81rECpNeyCBTGYnS8C51KScFKb6Vg6L7Hkb91RY/vNk7lt1Rg="
+added = "2026-10-23T00:00:00Z"

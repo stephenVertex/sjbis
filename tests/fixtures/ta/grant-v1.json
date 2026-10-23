@@ -1,0 +1,277 @@
+{
+  "cases": [
+    {
+      "canonical": "{\"answer\":\"plan B\",\"ask_id\":\"sjbis-AbCdEfGh\",\"asked_by\":\"agent-x\",\"decision\":\"approve\",\"expires_at\":\"2026-10-23T02:12:04Z\",\"issued_at\":\"2026-10-23T01:12:04Z\",\"kind\":\"grant\",\"note\":\"Yes, but only the two on the left — not the café ones ✓\",\"once\":false,\"question\":\"Do you want to fire the missiles?\",\"renews\":\"ta-3kp9ab\",\"signer\":\"dev@fixtures\",\"v\":1}",
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-ucfuud",
+        "record": {
+          "answer": "plan B",
+          "ask_id": "sjbis-AbCdEfGh",
+          "asked_by": "agent-x",
+          "decision": "approve",
+          "expires_at": "2026-10-23T02:12:04Z",
+          "issued_at": "2026-10-23T01:12:04Z",
+          "kind": "grant",
+          "note": "Yes, but only the two on the left — not the café ones ✓",
+          "once": false,
+          "question": "Do you want to fire the missiles?",
+          "renews": "ta-3kp9ab",
+          "signer": "dev@fixtures",
+          "v": 1
+        },
+        "record_sha256": "a08b4a0fa51465cd15d57d446e9702d6265e3ec01f220f51babeafb83b64582c",
+        "sig": "MEQCIBaldMHJHdRHslf0VQJPcAOKsItQsQuwgJKgYzmTRkoiAiACgRWjbPFhMN7kX6zDUTYTSDmHoxqpeWE/0oj0Bo2Y7Q=="
+      },
+      "expect_at_verify_at": {
+        "exit_code": 0,
+        "question": "Do you want to fire the missiles?",
+        "verdict": "valid"
+      },
+      "id": "ta-ucfuud",
+      "name": "approve",
+      "record_sha256": "a08b4a0fa51465cd15d57d446e9702d6265e3ec01f220f51babeafb83b64582c"
+    },
+    {
+      "canonical": "{\"ask_id\":\"sjbis-ZyXwVuTs\",\"asked_by\":\"deploybot\",\"decision\":\"deny\",\"expires_at\":\"2026-10-23T01:30:00Z\",\"issued_at\":\"2026-10-23T01:20:00Z\",\"kind\":\"grant\",\"once\":true,\"question\":\"Deploy \\\"v2\\\" to prod?\\nIt touches\\tbilling.\",\"signer\":\"dev@fixtures\",\"v\":1}",
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-qo2xz7",
+        "record": {
+          "ask_id": "sjbis-ZyXwVuTs",
+          "asked_by": "deploybot",
+          "decision": "deny",
+          "expires_at": "2026-10-23T01:30:00Z",
+          "issued_at": "2026-10-23T01:20:00Z",
+          "kind": "grant",
+          "once": true,
+          "question": "Deploy \"v2\" to prod?\nIt touches\tbilling.",
+          "signer": "dev@fixtures",
+          "v": 1
+        },
+        "record_sha256": "83b57cffafdae0e6755c195addb98c040a556e673de0f6cde9b40aa849bb1218",
+        "sig": "MEQCIEcB0Vd8X9RJ8JFrgzI9zqxM2IGuj2Pphn9VcT53sRyDAiAZPB6zyP8PbG3Eo0+JzpiXPdTt1NZkFY6zOcj+pXe8IA=="
+      },
+      "expect_at_verify_at": {
+        "exit_code": 1,
+        "question": "Deploy \"v2\" to prod?\nIt touches\tbilling.",
+        "verdict": "denied"
+      },
+      "id": "ta-qo2xz7",
+      "name": "deny",
+      "record_sha256": "83b57cffafdae0e6755c195addb98c040a556e673de0f6cde9b40aa849bb1218"
+    },
+    {
+      "canonical": "{\"issued_at\":\"2026-10-23T01:22:30Z\",\"kind\":\"revoke\",\"reason\":\"changed my mind\",\"signer\":\"dev@fixtures\",\"target\":\"ta-ucfuud\",\"v\":1}",
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-lrtcyb",
+        "record": {
+          "issued_at": "2026-10-23T01:22:30Z",
+          "kind": "revoke",
+          "reason": "changed my mind",
+          "signer": "dev@fixtures",
+          "target": "ta-ucfuud",
+          "v": 1
+        },
+        "record_sha256": "5c662c0436c6032c12c448c992b16599136ef230bb31b2203457cb3735e4b176",
+        "sig": "MEUCIQC2deqKZb6hdhj2B7bjgTFczM3aqwTH1Pzdzmi18rSeQgIgZTKXmWIB/1enYIdGc9+q6uT7HsH9H4abFwIXc+J3Clw="
+      },
+      "expect_at_verify_at": {
+        "exit_code": 0,
+        "verdict": "valid"
+      },
+      "id": "ta-lrtcyb",
+      "name": "revoke",
+      "record_sha256": "5c662c0436c6032c12c448c992b16599136ef230bb31b2203457cb3735e4b176"
+    }
+  ],
+  "description": "Cross-implementation vectors for DESIGN.md section 4. For each case: canonical (RFC 8785 JCS of envelope.record, as a UTF-8 string), record_sha256 (lowercase hex SHA-256 of canonical), id (ta- + first 6 chars of lowercase unpadded base32 of the digest), and the ES256 envelope signed by the registry key. Evaluate expectations at verify_at.",
+  "format": "ta grant fixture v1",
+  "negative": [
+    {
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-ucfuud",
+        "record": {
+          "answer": "plan B",
+          "ask_id": "sjbis-AbCdEfGh",
+          "asked_by": "agent-x",
+          "decision": "approve",
+          "expires_at": "2026-10-23T02:12:04Z",
+          "issued_at": "2026-10-23T01:12:04Z",
+          "kind": "grant",
+          "note": "Yes, but only the two on the left — not the café ones ✓",
+          "once": false,
+          "question": "Do you want to fire ALL the missiles?",
+          "renews": "ta-3kp9ab",
+          "signer": "dev@fixtures",
+          "v": 1
+        },
+        "record_sha256": "a08b4a0fa51465cd15d57d446e9702d6265e3ec01f220f51babeafb83b64582c",
+        "sig": "MEQCIBaldMHJHdRHslf0VQJPcAOKsItQsQuwgJKgYzmTRkoiAiACgRWjbPFhMN7kX6zDUTYTSDmHoxqpeWE/0oj0Bo2Y7Q=="
+      },
+      "expect": {
+        "exit_code": 5,
+        "verdict": "hash_mismatch"
+      },
+      "name": "tampered_question",
+      "why": "record edited after signing; record_sha256 no longer matches"
+    },
+    {
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-aaaaaa",
+        "record": {
+          "answer": "plan B",
+          "ask_id": "sjbis-AbCdEfGh",
+          "asked_by": "agent-x",
+          "decision": "approve",
+          "expires_at": "2026-10-23T02:12:04Z",
+          "issued_at": "2026-10-23T01:12:04Z",
+          "kind": "grant",
+          "note": "Yes, but only the two on the left — not the café ones ✓",
+          "once": false,
+          "question": "Do you want to fire the missiles?",
+          "renews": "ta-3kp9ab",
+          "signer": "dev@fixtures",
+          "v": 1
+        },
+        "record_sha256": "a08b4a0fa51465cd15d57d446e9702d6265e3ec01f220f51babeafb83b64582c",
+        "sig": "MEQCIBaldMHJHdRHslf0VQJPcAOKsItQsQuwgJKgYzmTRkoiAiACgRWjbPFhMN7kX6zDUTYTSDmHoxqpeWE/0oj0Bo2Y7Q=="
+      },
+      "expect": {
+        "exit_code": 5,
+        "verdict": "id_mismatch"
+      },
+      "name": "wrong_id",
+      "why": "envelope id does not derive from the record"
+    },
+    {
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-xqyx37",
+        "record": {
+          "answer": "plan B",
+          "ask_id": "sjbis-AbCdEfGh",
+          "asked_by": "agent-x",
+          "decision": "approve",
+          "expires_at": "2026-10-23T02:12:04Z",
+          "issued_at": "2026-10-23T01:12:04Z",
+          "kind": "grant",
+          "note": "Yes, but only the two on the left — not the café ones ✓",
+          "once": false,
+          "question": "Do you want to fire the missiles?",
+          "renews": "ta-3kp9ab",
+          "signer": "ghost@nowhere",
+          "v": 1
+        },
+        "record_sha256": "bc317dfda61d0178e09fc8265093ca3dd427948030cc1ac1f50feaf2103c811f",
+        "sig": "MEUCIF92jKTd2AsRV5bu6nsY6b6cSCDLrCPqkmtqnl9qfqFGAiEAuWLNOHj6sIkMWv3MaP+sxJ3eKPAdCWCH1kdDNdYVm5E="
+      },
+      "expect": {
+        "exit_code": 5,
+        "verdict": "unknown_signer"
+      },
+      "name": "unknown_signer",
+      "why": "signer id not in the pinned registry"
+    },
+    {
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-qlvaki",
+        "record": {
+          "ask_id": "sjbis-ZyXwVuTs",
+          "asked_by": "deploybot",
+          "decision": "approve",
+          "expires_at": "2026-10-23T01:30:00Z",
+          "issued_at": "2026-10-23T01:20:00Z",
+          "kind": "grant",
+          "once": true,
+          "question": "Deploy \"v2\" to prod?\nIt touches\tbilling.",
+          "signer": "dev@fixtures",
+          "v": 1
+        },
+        "record_sha256": "82ea052156513689980cb00001d07c68cc7bc54ce3ce6c2e0e492661fc8f25a3",
+        "sig": "MEQCIEcB0Vd8X9RJ8JFrgzI9zqxM2IGuj2Pphn9VcT53sRyDAiAZPB6zyP8PbG3Eo0+JzpiXPdTt1NZkFY6zOcj+pXe8IA=="
+      },
+      "expect": {
+        "exit_code": 5,
+        "verdict": "bad_signature"
+      },
+      "name": "forged_decision",
+      "why": "deny flipped to approve with hash and id recomputed; signature fails"
+    },
+    {
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-ljcvb6",
+        "record": {
+          "answer": "plan B",
+          "ask_id": "sjbis-AbCdEfGh",
+          "asked_by": "agent-x",
+          "decision": "approve",
+          "expires_at": "2026-10-23T02:12:04Z",
+          "issued_at": "2026-10-23T01:12:04Z",
+          "kind": "grant",
+          "note": null,
+          "once": false,
+          "question": "Do you want to fire the missiles?",
+          "renews": "ta-3kp9ab",
+          "signer": "dev@fixtures",
+          "v": 1
+        },
+        "record_sha256": "5a4550f90f4a2b738da3a1d8b57e413c248f4ebbcfa9546ee81cc6c5ac44ae2a",
+        "sig": "MEUCIHZkKWv35BKLtQWtzecM+SeAcMfRhjMkk6pBes8c4IaAAiEAqmDrKPOpZoK/U4sIGRTqBKGeTTF1yyYn5onjHlDXg3E="
+      },
+      "expect": {
+        "exit_code": 5,
+        "verdict": "malformed"
+      },
+      "name": "null_optional",
+      "why": "optional field present as null; must be omitted"
+    }
+  ],
+  "registry": {
+    "signers": [
+      {
+        "added": "2026-10-23T00:00:00Z",
+        "device": "ta-core fixture key (throwaway, committed, never trust in production)",
+        "id": "dev@fixtures",
+        "method": "software",
+        "pubkey": "BO+oCq28nf9JtALLtH0cDOZXBw2FHWYTvJk8zV81rECpNeyCBTGYnS8C51KScFKb6Vg6L7Hkb91RY/vNk7lt1Rg="
+      }
+    ],
+    "signers_toml": "[[signer]]\nid = \"dev@fixtures\"\nmethod = \"software\"\ndevice = \"ta-core fixture key (throwaway, committed, never trust in production)\"\npubkey = \"BO+oCq28nf9JtALLtH0cDOZXBw2FHWYTvJk8zV81rECpNeyCBTGYnS8C51KScFKb6Vg6L7Hkb91RY/vNk7lt1Rg=\"\nadded = \"2026-10-23T00:00:00Z\"\n"
+  },
+  "signature_variants": [
+    {
+      "envelope": {
+        "alg": "es256",
+        "id": "ta-ucfuud",
+        "record": {
+          "answer": "plan B",
+          "ask_id": "sjbis-AbCdEfGh",
+          "asked_by": "agent-x",
+          "decision": "approve",
+          "expires_at": "2026-10-23T02:12:04Z",
+          "issued_at": "2026-10-23T01:12:04Z",
+          "kind": "grant",
+          "note": "Yes, but only the two on the left — not the café ones ✓",
+          "once": false,
+          "question": "Do you want to fire the missiles?",
+          "renews": "ta-3kp9ab",
+          "signer": "dev@fixtures",
+          "v": 1
+        },
+        "record_sha256": "a08b4a0fa51465cd15d57d446e9702d6265e3ec01f220f51babeafb83b64582c",
+        "sig": "MEUCIBaldMHJHdRHslf0VQJPcAOKsItQsQuwgJKgYzmTRkoiAiEA/X7qW5MOntAhG6BTPK7J7HStcwqMbiUjs+dBzvXVjGQ="
+      },
+      "name": "approve_s_twin",
+      "original_is_high_s": false,
+      "twin_is_high_s": true,
+      "why": "approve envelope re-encoded with (r, n - s); same record, id and hash; must verify"
+    }
+  ],
+  "verify_at": "2026-10-23T01:25:00Z"
+}
