@@ -7,7 +7,20 @@
   var BASE = window.__SJBIS_BASE_PATH__ != null ? window.__SJBIS_BASE_PATH__
     : window.location.pathname.replace(/\/console(\.html)?\/?$/, '').replace(/\/+$/, '');
   var SIDECAR = (new URLSearchParams(window.location.search).get('sidecar') || 'http://127.0.0.1:7879').replace(/\/+$/, '');
-  var TTLS = [[600, '10m'], [3600, '1h'], [86400, '24h']];
+  var PRESET_TTLS = [[600, '10m'], [3600, '1h'], [86400, '24h']];
+  function fmtTtl(secs) {
+    if (secs % 86400 === 0) return (secs / 86400) + 'd';
+    if (secs % 3600 === 0) return (secs / 3600) + 'h';
+    if (secs % 60 === 0) return (secs / 60) + 'm';
+    return secs + 's';
+  }
+  // TTL choices for an ask: the agent's requested TTL first (whatever it is),
+  // then the presets. T cycles through them; the default is the requested one.
+  function ttls(n) {
+    var t = n && n.ttl_secs;
+    if (!t || PRESET_TTLS.some(function (p) { return p[0] === t; })) return PRESET_TTLS;
+    return [[t, fmtTtl(t) + ' (asked)']].concat(PRESET_TTLS);
+  }
   var SNOOZE_MINUTES = 15;
   var GRANT_SHOW_MS = 5000;
   var CHOICE_TYPES = { multichoice: 1, picklist: 1, schedule: 1, approval: 1 };
@@ -86,9 +99,9 @@
     S.cur = id; S.sel = null; setMsg('');
     noteEl.value = '';
     if (document.activeElement === noteEl) noteEl.blur(); // focus never carries over to the next ask
-    var n = current(), t = n && n.ttl_secs;
+    var n = current(), t = n && n.ttl_secs, list = ttls(n);
     S.ttlIdx = 1;
-    TTLS.forEach(function (p, i) { if (p[0] === t) S.ttlIdx = i; });
+    list.forEach(function (p, i) { if (p[0] === t) S.ttlIdx = i; });
   }
   function normalize() {
     var now = Date.now(), at = -1;
@@ -183,7 +196,7 @@
   }
   function approve(n, decision, value) {
     if (!S.sidecarUp) { setMsg('signing sidecar offline: ' + S.sidecarWhy, 'bad'); render(); return; }
-    var body = { ask_id: n.id, decision: decision, answer: value == null ? null : value, note: note(), ttl_secs: TTLS[S.ttlIdx][0], once: n.once === true };
+    var body = { ask_id: n.id, decision: decision, answer: value == null ? null : value, note: note(), ttl_secs: ttls(n)[S.ttlIdx][0], once: n.once === true };
     return run(post(SIDECAR + '/approve', body).then(function (g) {
       S.grant = { id: g.id, expires_at: g.expires_at, decision: g.decision || decision };
       removeAsk(n.id);
@@ -207,7 +220,7 @@
       setMsg('signing sidecar offline: ' + S.sidecarWhy, 'bad'); return render();
     }
     if (name === 'pick') { if (arg < opts.length) { S.sel = arg; setMsg(''); render(); } return; }
-    if (name === 'ttl') { if (isApproval(n)) { S.ttlIdx = (S.ttlIdx + 1) % TTLS.length; render(); } return; }
+    if (name === 'ttl') { if (isApproval(n)) { S.ttlIdx = (S.ttlIdx + 1) % ttls(n).length; render(); } return; }
     if (name === 'snooze') {
       var mins = SNOOZE_MINUTES;
       if (n.deadline) mins = Math.min(mins, Math.floor((Date.parse(n.deadline) - Date.now()) / 60000));
@@ -283,7 +296,7 @@
       if (row.length) { h.push('<div class="row">' + row.join('') + '</div>'); row = []; }
       row.push(btn('yes', 'Y', opts.length ? 'approve choice' : 'approve', 'yes', dis || (opts.length && S.sel == null)));
       row.push(btn('no', 'N', 'deny', 'no', dis));
-      row.push(btn('ttl', 'T', 'ttl ' + TTLS[S.ttlIdx][1], '', dis));
+      row.push(btn('ttl', 'T', 'ttl ' + ttls(n)[S.ttlIdx][1], '', dis));
     } else if (t === 'yesno' || t === 'diff') {
       row.push(btn('yes', 'Y', t === 'diff' ? 'Approve' : n.yes_label || 'Yes', 'yes', S.busy));
       row.push(btn('no', 'N', t === 'diff' ? 'Reject' : n.no_label || 'No', 'no', S.busy));
