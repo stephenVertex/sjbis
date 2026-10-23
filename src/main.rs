@@ -368,6 +368,7 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         mute_key: args.mute_key.clone(),
         privacy: args.privacy.clone(),
         sub_questions,
+        ttl_secs: None,
     };
 
     let resp = client

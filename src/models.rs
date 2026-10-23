@@ -27,6 +27,10 @@ pub enum QuestionType {
     Schedule,
     #[serde(rename = "form")]
     Form,
+    /// Transient-authority approval: can only be answered by a signed grant
+    /// (POST /grants), never by a plain POST /answer.
+    #[serde(rename = "approval")]
+    Approval,
 }
 
 impl std::fmt::Display for QuestionType {
@@ -42,6 +46,7 @@ impl std::fmt::Display for QuestionType {
             QuestionType::PickList => "picklist",
             QuestionType::Schedule => "schedule",
             QuestionType::Form => "form",
+            QuestionType::Approval => "approval",
         };
         write!(f, "{}", s)
     }
@@ -61,6 +66,7 @@ impl std::str::FromStr for QuestionType {
             "picklist" => Ok(QuestionType::PickList),
             "schedule" => Ok(QuestionType::Schedule),
             "form" => Ok(QuestionType::Form),
+            "approval" => Ok(QuestionType::Approval),
             _ => Err(format!("unknown question type: {}", s)),
         }
     }
@@ -239,7 +245,14 @@ pub struct Notification {
     pub note: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub_questions: Option<Vec<SubQuestion>>,
+    /// Requested lifetime (seconds) of the grant an approval ask asks for.
+    /// Defaults to [`DEFAULT_APPROVAL_TTL_SECS`] for approval asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<i64>,
 }
+
+/// Default requested grant lifetime for an approval ask (1 hour).
+pub const DEFAULT_APPROVAL_TTL_SECS: i64 = 3600;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -268,6 +281,10 @@ pub struct AnswerEnvelope {
     pub via: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Signed ta grant envelope, present only when an approval ask was
+    /// answered by a signed grant. Nothing sets this yet (see the grants bead).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<serde_json::Value>,
 }
 
 /// Rule compiled from natural language or written directly as JSON
@@ -378,6 +395,9 @@ pub struct AskRequest {
     pub privacy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub_questions: Option<Vec<SubQuestion>>,
+    /// Requested grant lifetime in seconds (approval asks). Must be > 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_secs: Option<i64>,
 }
 
 /// Answer submitted by the user via dashboard
@@ -432,10 +452,15 @@ pub struct DashboardState {
 
 /// Parsed deadline string: either duration ("6m", "2h") or absolute timestamp
 pub fn parse_deadline(s: &str) -> anyhow::Result<DateTime<Utc>> {
-    let now = Utc::now();
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
         return Ok(dt.with_timezone(&Utc));
     }
+    Ok(Utc::now() + parse_duration(s)?)
+}
+
+/// Parse a relative duration like "90s", "6m", "2h", "1d" or "500ms".
+/// Shared by `--deadline` (relative form) and `--ttl`.
+pub fn parse_duration(s: &str) -> anyhow::Result<chrono::Duration> {
     // Try parsing durations like "90s", "6m", "2h"
     let s = s.trim();
     if s.len() < 2 {
@@ -458,13 +483,30 @@ pub fn parse_deadline(s: &str) -> anyhow::Result<DateTime<Utc>> {
                         "ms" => chrono::Duration::milliseconds(num2),
                         _ => anyhow::bail!("unknown deadline unit: {}", unit2),
                     };
-                    return Ok(now + dur2);
+                    return Ok(dur2);
                 }
             }
             anyhow::bail!("unknown deadline format: {}", s)
         }
     };
-    Ok(now + dur)
+    Ok(dur)
+}
+
+/// Resolve and validate the requested grant TTL for an ask.
+///
+/// Any explicit `ttl_secs` must be strictly positive. Approval asks default to
+/// [`DEFAULT_APPROVAL_TTL_SECS`] when no TTL is given; other question types
+/// keep whatever (validated) value the caller sent.
+pub fn resolve_ttl_secs(
+    question_type: &QuestionType,
+    ttl_secs: Option<i64>,
+) -> Result<Option<i64>, String> {
+    match ttl_secs {
+        Some(t) if t <= 0 => Err(format!("ttl_secs must be > 0 (got {t})")),
+        Some(t) => Ok(Some(t)),
+        None if *question_type == QuestionType::Approval => Ok(Some(DEFAULT_APPROVAL_TTL_SECS)),
+        None => Ok(None),
+    }
 }
 
 /// Generate a deterministic, visually-distinct OKLCH color from an agent name.
@@ -575,6 +617,76 @@ mod tests {
             serde_json::from_value::<Vec<Choice>>(stored).expect("canonical choices should reload"),
             choices
         );
+    }
+
+    #[test]
+    fn question_type_approval_round_trips() {
+        let qt: QuestionType =
+            serde_json::from_value(json!("approval")).expect("approval should deserialize");
+        assert_eq!(qt, QuestionType::Approval);
+        assert_eq!(serde_json::to_value(&qt).unwrap(), json!("approval"));
+        assert_eq!(qt.to_string(), "approval");
+        assert_eq!("approval".parse::<QuestionType>(), Ok(QuestionType::Approval));
+    }
+
+    #[test]
+    fn ask_request_accepts_approval_with_ttl_and_choices() {
+        let request: AskRequest = serde_json::from_value(json!({
+            "question": "Do you want to fire the missiles?",
+            "question_type": "approval",
+            "ttl_secs": 600,
+            "choices": ["plan A", "plan B"]
+        }))
+        .expect("approval ask should deserialize");
+        assert_eq!(request.question_type, Some(QuestionType::Approval));
+        assert_eq!(request.ttl_secs, Some(600));
+        assert_eq!(request.choices.map(|c| c.len()), Some(2));
+    }
+
+    #[test]
+    fn resolve_ttl_secs_defaults_and_validates() {
+        assert_eq!(
+            resolve_ttl_secs(&QuestionType::Approval, None),
+            Ok(Some(DEFAULT_APPROVAL_TTL_SECS))
+        );
+        assert_eq!(resolve_ttl_secs(&QuestionType::Approval, Some(60)), Ok(Some(60)));
+        assert_eq!(resolve_ttl_secs(&QuestionType::YesNo, None), Ok(None));
+        for bad in [0, -1, i64::MIN] {
+            assert!(resolve_ttl_secs(&QuestionType::Approval, Some(bad)).is_err());
+            assert!(resolve_ttl_secs(&QuestionType::YesNo, Some(bad)).is_err());
+        }
+    }
+
+    #[test]
+    fn parse_duration_matches_deadline_units() {
+        assert_eq!(parse_duration("90s").unwrap(), chrono::Duration::seconds(90));
+        assert_eq!(parse_duration("6m").unwrap(), chrono::Duration::minutes(6));
+        assert_eq!(parse_duration("1h").unwrap(), chrono::Duration::hours(1));
+        assert_eq!(parse_duration("2d").unwrap(), chrono::Duration::days(2));
+        assert!(parse_duration("soon").is_err());
+        assert!(parse_duration("1").is_err());
+    }
+
+    #[test]
+    fn answer_envelope_omits_grant_when_absent() {
+        let mut envelope = AnswerEnvelope {
+            id: "sjbis-x".to_string(),
+            answer: None,
+            answer_label: None,
+            answered_at: None,
+            latency_ms: None,
+            renderer: "approval".to_string(),
+            src: "demo".to_string(),
+            via: "timed_out".to_string(),
+            note: None,
+            grant: None,
+        };
+        let value = serde_json::to_value(&envelope).unwrap();
+        assert!(value.get("grant").is_none());
+
+        envelope.grant = Some(json!({"id": "ta-7f3k2q"}));
+        let value = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(value["grant"]["id"], "ta-7f3k2q");
     }
 
     #[test]

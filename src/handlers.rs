@@ -100,9 +100,13 @@ pub async fn ask(
             let open = state.db.list_open_notifications().await.unwrap_or_default();
             let result = router.classify(&req.question, &req.agent_name, req.urgency, &open).await;
             if let Some(ref suggested) = result.renderer_suggested {
-                if let Ok(parsed) = suggested.parse::<QuestionType>() {
-                    question_type = parsed;
-                    _renderer_guessed = result.renderer_guessed;
+                // The AI router may never lock a card: approval is opt-in only.
+                match suggested.parse::<QuestionType>() {
+                    Ok(QuestionType::Approval) | Err(_) => {}
+                    Ok(parsed) => {
+                        question_type = parsed;
+                        _renderer_guessed = result.renderer_guessed;
+                    }
                 }
             }
             Some(result)
@@ -112,6 +116,10 @@ pub async fn ask(
     } else {
         None
     };
+
+    // Validate / default the requested grant TTL (approval asks default to 1h).
+    let ttl_secs = resolve_ttl_secs(&question_type, req.ttl_secs)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))))?;
 
     // Parse deadline
     let deadline = req.deadline.as_ref().and_then(|d| {
@@ -179,6 +187,7 @@ pub async fn ask(
         snooze_until: None,
         note: None,
         sub_questions: req.sub_questions.clone(),
+        ttl_secs,
     };
 
     // Apply urgency from AI router if confidence is high
@@ -214,6 +223,7 @@ pub async fn ask(
             src: notification.src.clone(),
             via: "rule_auto_answer".to_string(),
             note: None,
+            grant: None,
         };
         state.broadcaster.broadcast(&SseEvent::NotificationAnswered { envelope });
         return Ok(Json(notification));
@@ -238,6 +248,33 @@ pub async fn ask(
     Ok(Json(notification))
 }
 
+/// Error body returned when a plain answer targets an approval ask.
+pub const APPROVAL_PLAIN_ANSWER_ERROR: &str =
+    "approval asks can only be answered by a signed grant";
+
+/// Decide whether a plain `POST /answer/{id}` may answer `notif`.
+///
+/// Closed notifications are rejected with 409 as before. Approval asks are
+/// also rejected with 409: only a signed grant (POST /grants) may answer them,
+/// so neither the dashboard nor `sjbis answer --via caller-timeout` can.
+pub fn check_plain_answer_allowed(
+    notif: &Notification,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if notif.status != NotificationStatus::Open {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "notification already answered or cancelled"})),
+        ));
+    }
+    if notif.question_type == QuestionType::Approval {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": APPROVAL_PLAIN_ANSWER_ERROR })),
+        ));
+    }
+    Ok(())
+}
+
 /// POST /answer/:id — user answers via dashboard
 pub async fn answer(
     State(state): State<AppState>,
@@ -250,9 +287,7 @@ pub async fn answer(
         Err(e) => return Err(db_err(e)),
     };
 
-    if notif.status != NotificationStatus::Open {
-        return Err((StatusCode::CONFLICT, Json(serde_json::json!({"error": "notification already answered or cancelled"}))));
-    }
+    check_plain_answer_allowed(&notif)?;
 
     let now = Utc::now();
     let latency = now.signed_duration_since(notif.created_at).num_milliseconds();
@@ -271,6 +306,7 @@ pub async fn answer(
         src: updated.src.clone(),
         via: req.via.unwrap_or_else(|| "dashboard".to_string()),
         note: updated.note.clone(),
+        grant: None,
     };
 
     // Notify any blocking waiters
@@ -339,6 +375,7 @@ pub async fn dismiss(
         src: notif.src.clone(),
         via: "dismissed".to_string(),
         note: None,
+        grant: None,
     };
 
     // Signal any blocking waiters so they return immediately
@@ -732,6 +769,7 @@ pub async fn wait_for_answer(
                     src: notif.src.clone(),
                     via: "dashboard".to_string(),
                     note: notif.note.clone(),
+                    grant: None,
                 };
                 return Ok(Json(envelope));
             }
@@ -746,6 +784,7 @@ pub async fn wait_for_answer(
                     src: notif.src.clone(),
                     via: format!("{:?}", notif.status).to_lowercase(),
                     note: None,
+                    grant: None,
                 };
                 return Ok(Json(envelope));
             }
@@ -805,6 +844,7 @@ pub async fn wait_for_answer(
                 src,
                 via: "timed_out".to_string(),
                 note: None,
+                grant: None,
             };
             state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
             Ok(Json(envelope))
@@ -934,6 +974,56 @@ async fn send_push_notifications(state: &AppState, notif: &Notification) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn notification(question_type: &str, status: &str) -> Notification {
+        serde_json::from_value(serde_json::json!({
+            "id": "sjbis-test0001",
+            "agent_name": "demo",
+            "sender": "demo",
+            "src": "demo",
+            "question": "Deploy?",
+            "question_type": question_type,
+            "urgency": 2,
+            "blocking": true,
+            "deadline": null,
+            "reply_to": "stdout",
+            "status": status,
+            "created_at": "2026-10-23T00:00:00Z",
+            "ttl_secs": 3600
+        }))
+        .expect("test notification should deserialize")
+    }
+
+    #[test]
+    fn plain_answer_on_open_approval_is_conflict() {
+        let err = check_plain_answer_allowed(&notification("approval", "open"))
+            .expect_err("approval asks must reject plain answers");
+        assert_eq!(err.0, StatusCode::CONFLICT);
+        assert_eq!(
+            err.1 .0,
+            serde_json::json!({"error": "approval asks can only be answered by a signed grant"})
+        );
+    }
+
+    #[test]
+    fn plain_answer_allowed_on_open_non_approval() {
+        for qt in ["yesno", "multichoice", "ack", "freetext"] {
+            assert!(check_plain_answer_allowed(&notification(qt, "open")).is_ok(), "{qt}");
+        }
+    }
+
+    #[test]
+    fn plain_answer_on_closed_notification_is_conflict() {
+        for qt in ["yesno", "approval"] {
+            let err = check_plain_answer_allowed(&notification(qt, "answered"))
+                .expect_err("closed notifications cannot be answered");
+            assert_eq!(err.0, StatusCode::CONFLICT);
+            assert_eq!(
+                err.1 .0["error"],
+                "notification already answered or cancelled"
+            );
+        }
+    }
 
     #[test]
     fn sse_response_disables_nginx_buffering() {
