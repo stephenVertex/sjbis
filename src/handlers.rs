@@ -764,7 +764,7 @@ pub async fn wait_for_answer(
     if let Ok(Some(notif)) = state.db.get_notification(&id).await {
         match notif.status {
             NotificationStatus::Answered => {
-                let envelope = AnswerEnvelope {
+                let mut envelope = AnswerEnvelope {
                     id: id.clone(),
                     answer: notif.answer.clone(),
                     answer_label: notif.answer_label.clone(),
@@ -776,6 +776,11 @@ pub async fn wait_for_answer(
                     note: notif.note.clone(),
                     grant: None,
                 };
+                // An answered approval ask was answered by a signed grant:
+                // hand the waiter the envelope and via = "ta:<signer>".
+                if notif.question_type == QuestionType::Approval {
+                    crate::grant_handlers::attach_answering_grant(&state, &mut envelope).await;
+                }
                 return Ok(Json(envelope));
             }
             NotificationStatus::Dismissed | NotificationStatus::Cancelled | NotificationStatus::TimedOut => {
@@ -858,7 +863,7 @@ pub async fn wait_for_answer(
 }
 
 /// Background task: deliver response back to caller
-async fn deliver_response(notif: Notification, _answer: String, envelope: AnswerEnvelope) {
+pub(crate) async fn deliver_response(notif: Notification, _answer: String, envelope: AnswerEnvelope) {
     match notif.reply_to {
         ReplyTo::Webhook { url } => {
             let client = reqwest::Client::new();

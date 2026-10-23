@@ -2,6 +2,7 @@ mod cli;
 mod daemon;
 mod db;
 mod entities;
+mod grant_handlers;
 mod grants;
 mod handlers;
 mod models;

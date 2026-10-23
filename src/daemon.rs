@@ -1,3 +1,4 @@
+use crate::grant_handlers::*;
 use crate::handlers::*;
 use crate::models::*;
 use crate::db::Db;
@@ -105,6 +106,10 @@ fn api_routes() -> Router<AppState> {
         .route("/agents", get(list_agents).post(register_agent))
         .route("/device/register", post(register_device))
         .route("/device/unregister", post(unregister_device))
+        .route("/grants", get(list_grants).post(post_grant))
+        .route("/grants/{id}", get(get_grant))
+        .route("/grants/{id}/status", get(get_grant_status))
+        .route("/grants/{id}/claim", post(claim_grant))
         .merge(crate::triage::http::routes())
 }
 
@@ -365,5 +370,48 @@ mod tests {
                 "expected `{value}` to be rejected"
             );
         }
+    }
+
+    /// Grant routes are wired and reject bad input before touching the
+    /// database (the pool is lazy and never connects here).
+    #[tokio::test]
+    async fn grant_routes_reject_bad_input_without_a_database() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("lazy pool");
+        let state = AppState {
+            db: Db::from_pool(pool),
+            broadcaster: Broadcaster::new(),
+            router: Arc::new(None),
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            apns: Arc::new(Mutex::new(None)),
+        };
+        let app: Router = api_routes().with_state(state);
+        let send = |method: Method, uri: &str, body: &'static str| {
+            let app = app.clone();
+            let req = Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            async move {
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status();
+                let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+                let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+                (status, json)
+            }
+        };
+        let (status, body) = send(Method::POST, "/grants", "not json").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], "malformed");
+        let (status, _) = send(Method::GET, "/grants", "").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = send(Method::GET, "/grants?ask=a&renews=b", "").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, body) = send(Method::POST, "/grants/ta-abcdef/claim", "{}").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["code"], "malformed");
     }
 }

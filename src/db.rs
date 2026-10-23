@@ -1,3 +1,6 @@
+use crate::grants::{
+    GrantError, GrantRecord, StoredGrant, check_grant_for_notification, grant_answer,
+};
 use crate::models::*;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -11,6 +14,8 @@ pub struct Db {
 // Explicit column list to avoid PostgreSQL "cached plan must not change result type"
 // errors when columns are added via migrations.
 const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note, sub_questions, ttl_secs, renews";
+
+const GRANT_COLS: &str = "id, kind, notification_id, record, record_sha256, sig, signer, issued_at, expires_at, renews, revoked_by, claimed_by, claimed_at, created_at";
 
 impl Db {
     #[cfg(test)]
@@ -393,6 +398,188 @@ impl Db {
         rows.iter()
             .map(|r| Ok((r.try_get::<String, _>("token")?, r.try_get::<Option<String>, _>("device_name")?)))
             .collect()
+    }
+
+    // ── Grants (ta) ─────────────────────────────────────────────────────
+
+    async fn insert_grant_row(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        g: &StoredGrant,
+    ) -> Result<bool> {
+        let inserted = sqlx::query(&format!(
+            "INSERT INTO grants ({GRANT_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             ON CONFLICT (id) DO NOTHING"
+        ))
+        .bind(&g.id)
+        .bind(&g.kind)
+        .bind(&g.notification_id)
+        .bind(&g.record)
+        .bind(&g.record_sha256)
+        .bind(&g.sig)
+        .bind(&g.signer)
+        .bind(g.issued_at)
+        .bind(g.expires_at)
+        .bind(&g.renews)
+        .bind(&g.revoked_by)
+        .bind(&g.claimed_by)
+        .bind(g.claimed_at)
+        .bind(g.created_at)
+        .execute(&mut **tx)
+        .await?
+        .rows_affected();
+        Ok(inserted == 1)
+    }
+
+    /// Store a kind-grant envelope and answer its approval notification in one
+    /// transaction. Returns the notification as answered, or why the grant was
+    /// refused (unknown / not approval / not open / question mismatch / id
+    /// collision); nothing is written on refusal.
+    pub async fn insert_grant_answering(
+        &self,
+        g: &StoredGrant,
+        record: &GrantRecord,
+        answered_at: DateTime<Utc>,
+    ) -> Result<std::result::Result<Notification, GrantError>> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(&format!(
+            "SELECT {NOTIF_COLS} FROM notifications WHERE id = $1 FOR UPDATE"
+        ))
+        .bind(&record.ask_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            return Ok(Err(GrantError::NotificationNotFound(record.ask_id.clone())));
+        };
+        let mut notif = Self::row_to_notification(&row)?;
+        if let Err(e) = check_grant_for_notification(record, &notif) {
+            return Ok(Err(e));
+        }
+        if !Self::insert_grant_row(&mut tx, g).await? {
+            return Ok(Err(GrantError::IdCollision(g.id.clone())));
+        }
+        let a = grant_answer(record);
+        sqlx::query(
+            "UPDATE notifications SET status = 'answered', answer = $1, answer_label = $2, answered_at = $3, note = $4
+             WHERE id = $5 AND status = 'open'",
+        )
+        .bind(&a.answer)
+        .bind(&a.answer_label)
+        .bind(answered_at)
+        .bind(&a.note)
+        .bind(&notif.id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        notif.status = NotificationStatus::Answered;
+        notif.answer = Some(a.answer);
+        notif.answer_label = Some(a.answer_label);
+        notif.answered_at = Some(answered_at);
+        notif.note = a.note;
+        Ok(Ok(notif))
+    }
+
+    /// Store a revoke envelope and mark its target revoked (the first revoke
+    /// wins; later ones are stored but leave `revoked_by` unchanged).
+    pub async fn insert_grant_revoking(
+        &self,
+        g: &StoredGrant,
+        target: &str,
+    ) -> Result<std::result::Result<(), GrantError>> {
+        let mut tx = self.pool.begin().await?;
+        let exists = sqlx::query("SELECT id FROM grants WHERE id = $1 FOR UPDATE")
+            .bind(target)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
+        if !exists {
+            return Ok(Err(GrantError::TargetNotFound(target.to_string())));
+        }
+        if !Self::insert_grant_row(&mut tx, g).await? {
+            return Ok(Err(GrantError::IdCollision(g.id.clone())));
+        }
+        sqlx::query("UPDATE grants SET revoked_by = COALESCE(revoked_by, $1) WHERE id = $2")
+            .bind(&g.id)
+            .bind(target)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(Ok(()))
+    }
+
+    /// Store an envelope with no side effects (enroll).
+    pub async fn insert_grant_only(
+        &self,
+        g: &StoredGrant,
+    ) -> Result<std::result::Result<(), GrantError>> {
+        let mut tx = self.pool.begin().await?;
+        if !Self::insert_grant_row(&mut tx, g).await? {
+            return Ok(Err(GrantError::IdCollision(g.id.clone())));
+        }
+        tx.commit().await?;
+        Ok(Ok(()))
+    }
+
+    pub async fn get_grant(&self, id: &str) -> Result<Option<StoredGrant>> {
+        let row = sqlx::query(&format!("SELECT {GRANT_COLS} FROM grants WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref().map(Self::row_to_grant).transpose()
+    }
+
+    /// Grants answering notification `ask_id`, oldest first.
+    pub async fn list_grants_by_notification(&self, ask_id: &str) -> Result<Vec<StoredGrant>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {GRANT_COLS} FROM grants WHERE notification_id = $1 ORDER BY issued_at, created_at"
+        ))
+        .bind(ask_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(Self::row_to_grant).collect()
+    }
+
+    /// Grants whose signed record renews `id` (reauth children), oldest first.
+    pub async fn list_grants_by_renews(&self, id: &str) -> Result<Vec<StoredGrant>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {GRANT_COLS} FROM grants WHERE renews = $1 ORDER BY issued_at, created_at"
+        ))
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(Self::row_to_grant).collect()
+    }
+
+    /// Mark a grant claimed if it is not already. Returns false if it was.
+    pub async fn claim_grant(&self, id: &str, by: &str, at: DateTime<Utc>) -> Result<bool> {
+        let n = sqlx::query(
+            "UPDATE grants SET claimed_by = $1, claimed_at = $2 WHERE id = $3 AND claimed_by IS NULL",
+        )
+        .bind(by)
+        .bind(at)
+        .bind(id)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        Ok(n == 1)
+    }
+
+    fn row_to_grant(row: &sqlx::postgres::PgRow) -> anyhow::Result<StoredGrant> {
+        Ok(StoredGrant {
+            id: row.try_get("id")?,
+            kind: row.try_get("kind")?,
+            notification_id: row.try_get("notification_id")?,
+            record: row.try_get("record")?,
+            record_sha256: row.try_get("record_sha256")?,
+            sig: row.try_get("sig")?,
+            signer: row.try_get("signer")?,
+            issued_at: row.try_get("issued_at")?,
+            expires_at: row.try_get("expires_at")?,
+            renews: row.try_get("renews")?,
+            revoked_by: row.try_get("revoked_by")?,
+            claimed_by: row.try_get("claimed_by")?,
+            claimed_at: row.try_get("claimed_at")?,
+            created_at: row.try_get("created_at")?,
+        })
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
