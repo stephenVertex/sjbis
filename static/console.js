@@ -22,6 +22,7 @@
     return [[t, fmtTtl(t) + ' (asked)']].concat(PRESET_TTLS);
   }
   var SNOOZE_MINUTES = 15;
+  var DISMISS_ARM_MS = 2500; // second DISMISS press must land within this window
   var GRANT_SHOW_MS = 5000;
   var CHOICE_TYPES = { multichoice: 1, picklist: 1, schedule: 1, approval: 1 };
 
@@ -87,6 +88,11 @@
     return [];
   }
   function setMsg(text, cls) { S.msg = text || ''; S.msgCls = cls || ''; }
+  function disarmDismiss(rerender) {
+    S.dismissArm = null; S.dismissArmUntil = 0;
+    if (S.msg === 'press DISMISS again to confirm') setMsg('');
+    if (rerender) render();
+  }
 
   // ── queue ──────────────────────────────────────────────────────────────
   function live(n, now) {
@@ -97,6 +103,7 @@
   function selectAsk(id) {
     if (id === S.cur) return;
     S.cur = id; S.sel = null; setMsg('');
+    S.dismissArm = null; S.dismissArmUntil = 0;
     noteEl.value = '';
     if (document.activeElement === noteEl) noteEl.blur(); // focus never carries over to the next ask
     var n = current(), t = n && n.ttl_secs, list = ttls(n);
@@ -210,6 +217,7 @@
   function closeGrant() { clearTimeout(S.grantTimer); S.grant = null; render(); }
   function act(name, arg) {
     var n = current();
+    if (name !== 'dismiss' && S.dismissArm != null) disarmDismiss(true); // any other action cancels a pending dismiss
     if (name === 'prev') return step(-1);
     if (name === 'next') return step(1);
     if (name === 'reload') { setMsg(''); checkSidecar(); if (!es) connect(); return load(); }
@@ -227,7 +235,17 @@
       if (mins < 1) { setMsg('deadline too close to snooze', 'bad'); return render(); }
       return run(post(BASE + '/snooze/' + encodeURIComponent(n.id), { minutes: mins }).then(function () { removeAsk(n.id); }), 'snoozed ' + mins + 'm');
     }
-    if (name === 'dismiss') return run(post(BASE + '/dismiss/' + encodeURIComponent(n.id)).then(function () { removeAsk(n.id); }), 'dismissed');
+    if (name === 'dismiss') {
+      // Two presses within DISMISS_ARM_MS: a stray tap must not throw an ask away.
+      if (!(S.dismissArm === n.id && Date.now() < S.dismissArmUntil)) {
+        S.dismissArm = n.id; S.dismissArmUntil = Date.now() + DISMISS_ARM_MS;
+        setMsg('press DISMISS again to confirm', 'warn');
+        setTimeout(function () { if (S.dismissArm === n.id && Date.now() >= S.dismissArmUntil) disarmDismiss(true); }, DISMISS_ARM_MS + 50);
+        return render();
+      }
+      disarmDismiss(false);
+      return run(post(BASE + '/dismiss/' + encodeURIComponent(n.id)).then(function () { removeAsk(n.id); }), 'dismissed');
+    }
     if (isApproval(n)) {
       if (name === 'no') return approve(n, 'deny', null);
       if (name === 'confirm' && (!opts.length || S.sel == null)) return;
@@ -321,7 +339,7 @@
     $('c-noterow').hidden = !n;
     noteEl.placeholder = n && n.question_type === 'freetext' ? 'M: type the answer, Enter sends, Esc leaves' : 'M: optional note, Esc leaves';
     $('c-tools').innerHTML = [btn('prev', '←/K', 'prev'), btn('next', '→/J', 'next'), btn('note', 'M', 'note', '', !n),
-      btn('snooze', 'S', 'snooze ' + SNOOZE_MINUTES + 'm', '', !n || S.busy), btn('dismiss', 'D', 'dismiss', '', !n || S.busy),
+      btn('snooze', 'S', 'snooze ' + SNOOZE_MINUTES + 'm', '', !n || S.busy), btn('dismiss', 'D', n && S.dismissArm === n.id ? 'dismiss?' : 'dismiss', n && S.dismissArm === n.id ? 'arm' : '', !n || S.busy),
       btn('reload', 'R', 'reload')].join('');
     var g = S.grant;
     $('c-overlay').innerHTML = !g ? '' : '<div class="grant ' + (g.decision === 'deny' ? 'deny' : '') + '" id="c-grant">'

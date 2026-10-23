@@ -167,7 +167,12 @@
     assert(h.snoozes[0].id === 'c-ack' && h.snoozes[0].body.minutes === 15, 'S snoozes 15 minutes');
     await waitFor(() => question() === 'Dismiss me', 'advances after snooze');
     key('d');
-    await waitFor(() => h.dismisses.length === 1 && h.dismisses[0] === 'c-live2', 'D dismisses');
+    await waitFor(() => text('#c-card .msg').includes('press DISMISS again'), 'first D only arms');
+    assert(h.dismisses.length === 0, 'one D press does not dismiss');
+    key('j');
+    assert(!text('#c-card .msg').includes('press DISMISS again'), 'another key disarms');
+    key('d'); key('d');
+    await waitFor(() => h.dismisses.length === 1 && h.dismisses[0] === 'c-live2', 'D twice dismisses');
     await waitFor(() => text('#c-card .calm').includes('no open asks'), 'empty queue shows the calm screen');
     assert($('#c-bigclock'), 'empty screen shows the clock');
     es.emit({ event: 'notification_created', notification: ask('c-live3', 7, { question: 'Answered elsewhere', question_type: 'ack' }) });
