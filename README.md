@@ -644,9 +644,13 @@ res=$(sjbis ask --approval --ttl 1h --question "Deploy to prod?" \
   requester, verbatim question, detail, TTL, age, "answer on a trusted
   device") with no answer controls; dismiss and snooze still work.
 - A timeout on an approval ask carries no authority: the usual best-judgement-on-timeout rule does not apply.
-  If the deadline passes, `via` is `"timed_out"` and there is no grant (a
-  later bead adds the signed `grant` field to the result): do not record an auto-pick and do not claim approval. Ask again, or
+  If the deadline passes, `via` is `"timed_out"` and there is no `grant`
+  field in the result: do not record an auto-pick and do not claim approval. Ask again, or
   proceed without authority.
+- When a trusted device answers, the result has `via: "ta:<signer>"` and a
+  `grant` field holding the signed envelope (see [Grants (ta)](#grants-ta)).
+  Agents normally drive this through `ta ask` / `ta verify`; run `ta prime`
+  for the agent-side flow.
 
 ## API for Agents
 
@@ -710,6 +714,105 @@ curl -X POST http://localhost:7878/rules \
 
 This creates a mute-all + surface-exceptions ruleset automatically.
 
+## Grants (ta)
+
+A grant is a signed envelope produced on a trusted device (iPhone Face ID,
+Mac Touch ID, Pi console YubiKey) by `ta`, the transient-authority tool. The
+daemon verifies it against its copy of the signer registry, stores it, and
+for a grant of kind `grant` answers the approval ask it names. Formats are
+normative in the transient-authority DESIGN.md §4; the daemon's verifier is
+cross-checked against `tests/fixtures/ta/grant-v1.json` from `ta-core`.
+
+```json
+{
+  "id": "ta-ucfuud",
+  "record": { "v": 1, "kind": "grant", "ask_id": "sjbis-AbCdEfGh", "...": "..." },
+  "record_sha256": "a08b4a0f…",
+  "alg": "es256",
+  "sig": "MEQCIB…"
+}
+```
+
+Verification: canonical bytes are RFC 8785 JCS of `record`;
+`record_sha256` is lowercase hex SHA-256 of them; `id` is `ta-` plus the
+first 6 chars of lowercase unpadded RFC 4648 base32 of the digest; `alg`
+is `es256`; `sig` is standard base64 of a DER ECDSA P-256 signature over the
+canonical bytes; `record.signer` must be in the registry and the signature
+must verify against its key. Records must have `v: 1`, a known `kind`, no
+unknown fields, no `null` values (omit absent optionals), and timestamps of
+exactly `YYYY-MM-DDTHH:MM:SSZ`. A grant needs `expires_at > issued_at`.
+
+### Signer registry: `~/.config/sjbis/signers.toml`
+
+Re-read on every `POST /grants` (no restart needed). `SJBIS_SIGNERS`
+overrides the path. A missing file is an empty registry, so every grant is
+refused as `unknown_signer`; an unparsable file, a bad key or a duplicate id
+makes `POST /grants` return 500 until fixed.
+
+```toml
+[[signer]]
+id     = "faceid@iphone"
+method = "faceid"
+device = "Stephen's iPhone"
+pubkey = "BJx3…"   # standard base64 of the 65-byte SEC1 uncompressed P-256 point
+added  = "2026-10-23T00:00:00Z"
+```
+
+This copy only rejects junk early. Verifiers (`ta verify`) trust their own
+pinned registry, never keys served by the daemon.
+
+### Endpoints
+
+| Endpoint | Does |
+|---|---|
+| `POST /grants` | Body: the envelope. Verify, store, apply. `201` with `{envelope, status}`. |
+| `GET /grants/{id}` | `{envelope, status}` |
+| `GET /grants?ask=ID` | Array of `{envelope, status}` for grants answering notification `ID` |
+| `GET /grants?renews=ID` | Array of `{envelope, status}` whose signed `renews` is `ID` (reauth children) |
+| `GET /grants/{id}/status` | `{expired, revoked_by, claimed_by, claimed_at}` |
+| `POST /grants/{id}/claim` | Body `{"by": "agent-y"}`. Consume a `once` grant; returns `{envelope, status}` |
+
+`status.expired` is computed at read time from `record.expires_at`
+(`now >= expires_at`); revoke and enroll records never expire. `revoked_by`
+is the id of the first revoke record that targeted the grant.
+
+Effect of `POST /grants` by `record.kind`:
+
+- `grant`: the notification `record.ask_id` must exist, be an `approval`
+  ask, be open, and have a `question` byte-identical to `record.question`.
+  In one transaction the grant is stored and the notification answered with
+  `answer = decision`, `answer_label = record.answer` (or the decision),
+  `note = record.note`. Blocking waiters (`GET /wait/{id}`, `ta ask`), SSE
+  and `reply_to` receive the answer envelope with `via = "ta:<signer>"` and
+  `grant` set to the full signed envelope. `GET /wait` on an
+  already-answered approval ask returns the same.
+- `revoke`: `record.target` must be a stored grant; it gets `revoked_by`.
+  Revoking a grant does not revoke its renewals.
+- `enroll`: stored only (other machines pull and verify it before updating
+  their own registry).
+
+Reauth: `POST /ask` accepts an optional top-level `"renews": "ta-…"`. It is
+stored on the notification and returned by `GET /notification/{id}` and
+`GET /list`, so the signing device can copy it into the signed record.
+
+### Errors
+
+Bodies are `{"error": "<message>", "code": "<code>"}`.
+
+| HTTP | `code` | When |
+|---|---|---|
+| 400 | `malformed` | Body not JSON; envelope shape or unknown envelope field; record not an object, `null` value, unknown field, missing field, `v != 1`, unknown kind, bad timestamp, `expires_at <= issued_at`, bad enroll `pubkey`; bad `GET /grants` query; bad claim body |
+| 404 | `notification_not_found` / `target_not_found` / `not_found` | Unknown ask, revoke target, or grant id |
+| 409 | `not_open` / `not_approval` | The ask is no longer open, or is not an approval ask |
+| 409 | `id_collision` | A grant with this id already exists (re-sign with a fresh `issued_at`) |
+| 409 | `not_once` / `already_claimed` | Claim on a grant without `once: true`, or already claimed |
+| 422 | `unsupported_alg` / `hash_mismatch` / `id_mismatch` | `alg != "es256"`; `record_sha256` or `id` does not derive from the record |
+| 422 | `unknown_signer` / `bad_signature` | Signer not in the registry; `sig` not base64/DER or does not verify |
+| 422 | `question_mismatch` | `record.question` differs from the ask's question by any byte |
+| 500 | `registry_error` | `signers.toml` unreadable or invalid |
+
+Nothing is written when a POST is refused.
+
 ## Configuration Files
 
 ### `~/.config/sjbis/daemon.toml` (client)
@@ -728,6 +831,10 @@ url = "http://your-daemon-host:7878"
 [database]
 dsn = "postgresql://user:pass@your-postgres-host:5432/sjbis"
 ```
+
+### `~/.config/sjbis/signers.toml` (daemon host)
+
+Signer registry for ta grants. See [Grants (ta)](#grants-ta).
 
 ### `~/.config/sjbis/entities.toml`
 
@@ -786,6 +893,7 @@ Migrations live in `migrations/` and auto-run on daemon startup via `sqlx::migra
 - `003_add_note.sql` — `note TEXT` column
 - `004_add_detail_markdown.sql` — `detail_markdown` for rich text
 - `005_add_rule_priority.sql` — `priority` for rule evaluation order
+- `011_grants.sql` — `grants` table for ta envelopes; `renews` on notifications
 
 ## Upgrading
 
@@ -854,6 +962,7 @@ git tag v0.1.3 && git push origin v0.1.3
 |---|---|
 | `SJBIS_DAEMON` | Complete daemon base URL the CLI talks to, including any configured path prefix. Defaults to `http://localhost:7878`. Set this (or `~/.config/sjbis/daemon.toml`) to point at a remote daemon host. |
 | `FIREWORKS_API_KEY` | Enable AI-powered rule compilation and renderer guessing |
+| `SJBIS_SIGNERS` | Daemon: path of the ta signer registry (default `~/.config/sjbis/signers.toml`) |
 
 ## Troubleshooting
 

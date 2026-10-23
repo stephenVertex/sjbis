@@ -867,6 +867,8 @@ APPROVAL ASKS (transient authority)
   A timeout on an approval ask carries no authority: the usual best-judgement-on-timeout rule does not apply.
   A timed_out result means NO approval. Never treat silence as consent.
 
+  For the agent-side flow (ask, verify, relay, claim), run `ta prime`.
+
 COMMON FLAGS
   --agent-name      Required. Identifies the calling agent.
   --instance        Context, e.g. "Gmail inbox", "Session s7b3d11"
