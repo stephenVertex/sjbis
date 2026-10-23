@@ -1557,6 +1557,41 @@ button { font-family: inherit; }
 }
 .ack-btn:hover { transform: translateY(-3px) scale(1.03); }
 
+/* Approval (ta) — locked card: no answer controls on the dashboard */
+.approval-locked {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 18px 20px;
+  border: 1px dashed var(--violet);
+  border-radius: var(--r-m);
+  background: var(--surf);
+}
+.approval-badge {
+  align-self: flex-start;
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: #07080c; background: var(--violet);
+  padding: 4px 10px; border-radius: 999px;
+}
+.approval-facts {
+  display: grid; grid-template-columns: max-content 1fr;
+  gap: 6px 16px; margin: 0;
+  font-family: var(--mono); font-size: 13px;
+}
+.approval-facts dt { color: var(--ink-3); }
+.approval-facts dd { margin: 0; color: var(--ink); }
+.approval-hint {
+  margin: 0;
+  font-family: var(--sans); font-size: 15px; font-weight: 600;
+  color: var(--violet);
+}
+.card .lock-badge {
+  display: inline-block; margin-bottom: 6px;
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: #07080c; background: var(--violet);
+  padding: 2px 8px; border-radius: 999px;
+}
+
 /* Picklist */
 .picklist .search {
   width: 100%;

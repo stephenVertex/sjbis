@@ -32,6 +32,7 @@ const TYPE_ICONS = {
   picklist:    '☰',
   schedule:    '◷',
   form:        '▤',
+  approval:    '🔒',
 };
 
 // Browser routes and API calls share one dashboard base so a card path never
@@ -343,6 +344,9 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef, no
           {n.urgency >= 4 ? 'URGENT' : n.urgency === 3 ? 'TIMELY' : 'CALM'}
         </div>
       </div>
+      {(n.question_type || n.type) === 'approval' && (
+        <div className="lock-badge" title="Answer on a trusted device">🔒 locked · answer on a trusted device</div>
+      )}
       <div className="q">{n.question}</div>
       {n.choices && (
         <div className="preview-row">

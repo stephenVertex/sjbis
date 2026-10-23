@@ -13,6 +13,7 @@ const TYPE_LABEL = {
   picklist: 'Pick from list',
   schedule: 'Schedule',
   form: 'Form',
+  approval: 'Approval (locked)',
 };
 
 const TERMINAL_STATUS = {
@@ -921,6 +922,50 @@ function FormSubWidget({ sq, value, onChange }) {
   }
 }
 
+// Transient-authority approval (ta). Answerable only by a signed grant from a
+// trusted device (iPhone Face ID, Mac Touch ID, Pi console YubiKey). The web
+// dashboard is not a trusted surface, so this is a locked card: lock badge,
+// requester, TTL, age and a pointer to the trusted device, and NO answer
+// controls (no buttons, no key bindings, no onAnswer call). The Focus shell
+// still renders the verbatim question and detail, and keeps snooze/dismiss.
+const DEFAULT_APPROVAL_TTL_SECS = 3600;
+
+function formatTtl(secs) {
+  const s = Number(secs);
+  if (!Number.isFinite(s) || s <= 0) return '—';
+  if (s % 86400 === 0) return `${s / 86400}d`;
+  if (s % 3600 === 0) return `${s / 3600}h`;
+  if (s % 60 === 0) return `${s / 60}m`;
+  return `${s}s`;
+}
+
+function ApprovalRenderer({ n, nowMs }) {
+  const ttl = n.ttl_secs != null ? n.ttl_secs : DEFAULT_APPROVAL_TTL_SECS;
+  const choices = normalizeChoices(n.choices);
+  return (
+    <div className="approval-locked" aria-label="Locked approval">
+      <div className="approval-badge">
+        <span className="approval-lock" aria-hidden="true">🔒</span> Locked · signed approval required
+      </div>
+      <dl className="approval-facts">
+        <dt>Requested by</dt>
+        <dd className="approval-agent">{n.agent_name || n.agent}</dd>
+        <dt>Grant TTL</dt>
+        <dd className="approval-ttl">{formatTtl(ttl)}</dd>
+        <dt>Asked</dt>
+        <dd className="approval-age">{window.SjbisTime.formatAge(n.sentAt, { nowMs })}</dd>
+        {choices.length > 0 && (
+          <>
+            <dt>Choices</dt>
+            <dd className="approval-choices">{choices.map((c) => c.label).join(' · ')}</dd>
+          </>
+        )}
+      </dl>
+      <p className="approval-hint">answer on a trusted device</p>
+    </div>
+  );
+}
+
 const RENDERERS = {
   yesno: YesNoRenderer,
   multichoice: MultiChoiceRenderer,
@@ -932,6 +977,7 @@ const RENDERERS = {
   picklist: PicklistRenderer,
   schedule: ScheduleRenderer,
   form: FormRenderer,
+  approval: ApprovalRenderer,
 };
 
 // ── Snooze picker ─────────────────────────────────────────────────────────
@@ -1042,6 +1088,8 @@ function Focus({ n, nowMs, canonicalUrl, onClose, onAnswer, onDismiss, onSnooze 
   const Renderer = RENDERERS[nn.type] || AckRenderer;
   const color = window.agentColor ? window.agentColor(nn.agent) : '#C7F33D';
   const isOpen = nn.status === 'open';
+  // Approval cards are locked: no answer controls and no note composer here.
+  const locked = nn.type === 'approval';
   const [snoozing, setSnoozing] = React.useState(false);
   const [note, setNote] = React.useState('');
   const [showNote, setShowNote] = React.useState(false);
@@ -1066,14 +1114,14 @@ function Focus({ n, nowMs, canonicalUrl, onClose, onAnswer, onDismiss, onSnooze 
         e.preventDefault();
         onDismiss();
       }
-      if (e.key === 'N' && !e.target?.matches('input,textarea')) {
+      if (!locked && e.key === 'N' && !e.target?.matches('input,textarea')) {
         e.preventDefault();
         setShowNote((v) => !v);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, onClose, snoozing, onDismiss]);
+  }, [isOpen, onClose, snoozing, onDismiss, locked]);
 
   React.useEffect(() => {
     if (!isOpen) {
@@ -1132,13 +1180,13 @@ function Focus({ n, nowMs, canonicalUrl, onClose, onAnswer, onDismiss, onSnooze 
           ) : null}
           {isOpen ? (
             <>
-              <Renderer n={nn} onAnswer={handleAnswer} />
+              <Renderer n={nn} onAnswer={handleAnswer} nowMs={nowMs} />
               <div className="focus-actions">
                 <button className="dismiss-btn" onClick={onDismiss}>
                   <span className="k">d</span> Dismiss without reply
                 </button>
               </div>
-              <div className="note-composer">
+              {!locked && <div className="note-composer">
                 {showNote ? (
                   <>
                     <textarea
@@ -1161,7 +1209,7 @@ function Focus({ n, nowMs, canonicalUrl, onClose, onAnswer, onDismiss, onSnooze 
                     <span>✎</span> Add note <span className="k">⇧N</span>
                   </button>
                 )}
-              </div>
+              </div>}
             </>
           ) : (
             <TerminalResult n={nn} />

@@ -6,6 +6,8 @@
   const PLAIN_ID = 'sjbis-focus-plain';
   const CANONICAL_ID = 'sjbis-focus-canonical';
   const CRASH_ID = 'sjbis-focus-crash';
+  const APPROVAL_ID = 'sjbis-focus-approval';
+  const APPROVAL_QUESTION = 'Do you want to fire the missiles?';
   const PLAIN_CHOICES = ['Legacy first choice', 'Legacy second choice'];
   const CANONICALIZED_PLAIN_CHOICES = PLAIN_CHOICES.map((choice) => ({
     value: choice,
@@ -71,6 +73,20 @@
       urgency: 1,
       blocking: false,
       created_at: '2026-09-22T18:34:20Z',
+    },
+    {
+      id: APPROVAL_ID,
+      agent_name: 'ta-fixture',
+      sender: 'ta-fixture',
+      src: 'ta-fixture',
+      question: APPROVAL_QUESTION,
+      detail: 'Locked approval: only a signed grant may answer.',
+      question_type: 'approval',
+      choices: [{ value: 'plan A', label: 'plan A' }, { value: 'plan B', label: 'plan B' }],
+      ttl_secs: 3600,
+      urgency: 3,
+      blocking: true,
+      created_at: '2026-09-22T18:35:20Z',
     },
   ];
 
@@ -205,7 +221,7 @@
 
   async function run() {
     document.getElementById('original-exception').textContent = ORIGINAL_EXCEPTION;
-    await waitFor(() => document.querySelectorAll('.card').length === 3, 'controlled cards should render', 15000);
+    await waitFor(() => document.querySelectorAll('.card').length === 4, 'controlled cards should render', 15000);
     installFocusCrash();
     assert(document.querySelector('#root .app'), 'dashboard root remains mounted');
 
@@ -248,6 +264,26 @@
     cardForQuestion('Can legacy plain-string choices still render?').click();
     await waitFor(() => choiceLabels().length === PLAIN_CHOICES.length, 'a normal card should open after the forced failure');
     assert(!document.querySelector('.focus-error'), 'the boundary resets for the next card');
+    await closeFocus();
+
+    const approvalCard = cardForQuestion(APPROVAL_QUESTION);
+    assert(approvalCard.querySelector('.lock-badge'), 'approval list card shows a lock badge');
+    approvalCard.click();
+    const locked = await waitFor(() => document.querySelector('.focus .approval-locked'), 'approval Focus should open locked');
+    const answersBefore = harness.answers.length;
+    assert(document.querySelector('.focus .focus-q').textContent === APPROVAL_QUESTION, 'approval renders the verbatim question');
+    assert(document.querySelector('.focus .focus-detail').textContent.includes('only a signed grant'), 'approval renders the detail');
+    assert(locked.textContent.includes('answer on a trusted device'), 'approval points to a trusted device');
+    assert(locked.querySelector('.approval-agent').textContent === 'ta-fixture', 'approval shows the requesting agent');
+    assert(locked.querySelector('.approval-ttl').textContent === '1h', 'approval shows the requested TTL');
+    assert(locked.querySelector('.approval-age').textContent.length > 0, 'approval shows the age');
+    assert(!document.querySelector('.focus .bigbtn, .focus .choice, .focus .ack-btn, .focus .btn-action, .focus input:not(.focus-share-url), .focus textarea'), 'approval has no answer controls');
+    assert(!document.querySelector('.focus .note-toggle'), 'approval has no note composer');
+    assert(document.querySelector('.focus .dismiss-btn'), 'approval keeps dismiss');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert(harness.answers.length === answersBefore, 'approval keys post no answer');
     await closeFocus();
 
     document.body.dataset.regression = 'passed';
