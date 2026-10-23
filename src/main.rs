@@ -418,21 +418,50 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
     Ok(())
 }
 
+/// How long a waiter keeps re-polling `/wait` across transport failures
+/// (daemon restart, dropped link) before giving up. The daemon itself caps a
+/// single long-poll at 600s and answers "timed_out" past the deadline.
+const WAIT_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const WAIT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
 async fn wait_for_answer(client: &reqwest::Client, url: &str, id: &str) -> Result<AnswerEnvelope> {
     // The server caps its wait at the notification's deadline (or a 600s
     // ceiling). Use a slightly larger request timeout so the server always
     // returns the structured result (answered OR timed_out) rather than the
     // client aborting first.
-    let resp = client
-        .get(format!("{}/wait/{}", url, id))
-        .timeout(std::time::Duration::from_secs(660))
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("wait failed: {}", resp.text().await.unwrap_or_default());
+    //
+    // The notification lives on the daemon, so a dropped long-poll (daemon
+    // restart, flaky link) is not a lost answer: re-polling an answered
+    // notification returns its envelope immediately. Retry transient failures
+    // for a bounded budget instead of dying mid-wait.
+    let started = std::time::Instant::now();
+    loop {
+        let transient = match client
+            .get(format!("{}/wait/{}", url, id))
+            .timeout(std::time::Duration::from_secs(660))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => return Ok(resp.json().await?),
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                // A daemon going down cancels its waiters; 5xx covers a proxy in the middle.
+                if status.is_server_error() || text.contains("waiter cancelled") {
+                    format!("HTTP {status}: {text}")
+                } else {
+                    anyhow::bail!("wait failed: {}", text);
+                }
+            }
+            Err(e) if e.is_connect() || e.is_request() || e.is_body() || e.is_decode() || e.is_timeout() => e.to_string(),
+            Err(e) => return Err(e.into()),
+        };
+        if started.elapsed() >= WAIT_RETRY_BUDGET {
+            anyhow::bail!("wait failed after retrying for {}s: {}", WAIT_RETRY_BUDGET.as_secs(), transient);
+        }
+        eprintln!("wait for {id} interrupted ({transient}); re-polling, the question is still open on the daemon");
+        tokio::time::sleep(WAIT_RETRY_DELAY).await;
     }
-    let envelope: AnswerEnvelope = resp.json().await?;
-    Ok(envelope)
 }
 
 async fn cmd_list(json: bool) -> Result<()> {
