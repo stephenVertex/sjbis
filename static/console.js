@@ -330,11 +330,18 @@
   var KEYS = { y: 'yes', n: 'no', enter: 'confirm', t: 'ttl', m: 'note', s: 'snooze', d: 'dismiss',
     arrowleft: 'prev', k: 'prev', arrowright: 'next', j: 'next', r: 'reload' };
   document.addEventListener('keydown', function (e) {
-    // Ctrl+Alt+<key> is a "hard" key (the Stream Deck sends these): it acts
-    // even while the note field has focus. Any other modifier is ignored.
-    var hard = e.ctrlKey && e.altKey && !e.metaKey;
+    // Ctrl+Alt+Shift+<key> is a "hard" key (the Stream Deck sends these): it
+    // acts even while the note field has focus. The desktop owns plain
+    // Ctrl+Alt combos (terminal, workspaces), so all three are required.
+    // Any other modifier combination is ignored.
+    var hard = e.ctrlKey && e.altKey && e.shiftKey && !e.metaKey;
     if ((e.ctrlKey || e.metaKey || e.altKey) && !hard) return;
     var key = (e.key || '').toLowerCase();
+    if (hard) { // Shift changes e.key ("1" -> "!"), so go by the physical key
+      var c = e.code || '';
+      if (/^Digit[0-9]$/.test(c)) key = c.slice(5);
+      else if (/^Key[A-Z]$/.test(c)) key = c.slice(3).toLowerCase();
+    }
     if (S.grant) { e.preventDefault(); closeGrant(); return; }
     if (hard && e.target === noteEl) noteEl.blur();
     if (e.target === noteEl) {
