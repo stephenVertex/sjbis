@@ -180,6 +180,25 @@
     es.emit({ event: 'notification_answered', envelope: { id: 'c-live3', renderer: 'ack', src: 'x', via: 'dashboard' } });
     await waitFor(() => !question(), 'SSE answered removes the ask');
 
+    // numeric asks: YES/NO step, Enter sends "<value> <unit>", M types a number
+    const before = h.answers.length;
+    es.emit({ event: 'notification_created', notification: ask('c-num', 8, { question: 'How many?', question_type: 'numeric',
+      min: 0, max: 100, step: 5, default_value: 20, unit: 'asks' }) });
+    await waitFor(() => question() === 'How many?', 'numeric ask appears');
+    assert(text('#c-num').startsWith('20'), 'numeric shows the default value');
+    key('y'); key('y'); key('n');
+    assert(text('#c-num').startsWith('25'), 'Y/N step the value');
+    key('Enter');
+    await waitFor(() => h.answers.length === before + 1, 'Enter sends the numeric value');
+    assert(h.answers[before].id === 'c-num' && h.answers[before].body.answer === '25 asks', 'numeric answer is "<value> <unit>"');
+    es.emit({ event: 'notification_created', notification: ask('c-num2', 9, { question: 'How many more?', question_type: 'numeric', min: 0, max: 100, step: 1 }) });
+    await waitFor(() => question() === 'How many more?', 'second numeric ask appears');
+    key('m'); $('#c-note').value = '500'; key('Enter', $('#c-note'));
+    assert(h.answers.length === before + 1 && text('#c-card .msg').includes('outside'), 'out-of-range typed number is refused');
+    $('#c-note').value = '45'; key('Enter', $('#c-note'));
+    await waitFor(() => h.answers.length === before + 2, 'typed number sends');
+    assert(h.answers[before + 1].body.answer === '45' && !('note' in h.answers[before + 1].body), 'typed numeric answer has no unit and no note');
+
     es.onerror(new Event('error'));
     assert(text('#c-hdr').includes('reconnecting'), 'SSE error shows reconnecting');
     await waitFor(() => h.sources.length >= 2 && text('#c-hdr').includes('live'), 'SSE reconnects', 4000);

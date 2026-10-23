@@ -22,6 +22,7 @@
     return [[t, fmtTtl(t) + ' (asked)']].concat(PRESET_TTLS);
   }
   var SNOOZE_MINUTES = 15;
+  var OK_MSG_MS = 4000; // "answered: …" confirmations fade after this, so they never linger on the next ask
   var DISMISS_ARM_MS = 2500; // second DISMISS press must land within this window
   var GRANT_SHOW_MS = 5000;
   var CHOICE_TYPES = { multichoice: 1, picklist: 1, schedule: 1, approval: 1 };
@@ -77,6 +78,31 @@
   function clock() { return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
   function current() { for (var i = 0; i < S.queue.length; i++) if (S.queue[i].id === S.cur) return S.queue[i]; return null; }
   function isApproval(n) { return n.question_type === 'approval'; }
+  function isNumeric(n) { return n && n.question_type === 'numeric'; }
+  function numStart(n) {
+    if (!isNumeric(n)) return null;
+    if (typeof n.default_value === 'number') return n.default_value;
+    return typeof n.min === 'number' ? n.min : 0;
+  }
+  function numStep(n) { return typeof n.step === 'number' && n.step > 0 ? n.step : 1; }
+  function numFmt(v) { return String(Math.round(v * 1e6) / 1e6); }
+  function numClamp(n, v) {
+    if (typeof n.min === 'number') v = Math.max(n.min, v);
+    if (typeof n.max === 'number') v = Math.min(n.max, v);
+    return v;
+  }
+  function numRange(n) {
+    var lo = typeof n.min === 'number' ? numFmt(n.min) : '', hi = typeof n.max === 'number' ? numFmt(n.max) : '';
+    return lo || hi ? lo + '\u2013' + hi : 'any number';
+  }
+  function numAnswer(n) {
+    var typed = note(), v = typed ? Number(typed.replace(/,/g, '')) : S.num;
+    if (typed && !isFinite(v)) { setMsg('"' + typed + '" is not a number', 'bad'); return null; }
+    if ((typeof n.min === 'number' && v < n.min) || (typeof n.max === 'number' && v > n.max)) {
+      setMsg(numFmt(v) + ' is outside ' + numRange(n), 'bad'); return null;
+    }
+    return numFmt(v) + (n.unit ? ' ' + n.unit : '');
+  }
   function options(n) {
     if (n.choices && n.choices.length) {
       return n.choices.map(function (c) { return typeof c === 'string' ? { value: c, label: c } : { value: c.value, label: c.label || c.value }; });
@@ -104,6 +130,7 @@
     if (id === S.cur) return;
     S.cur = id; S.sel = null; setMsg('');
     S.dismissArm = null; S.dismissArmUntil = 0;
+    S.num = numStart(current());
     noteEl.value = '';
     if (document.activeElement === noteEl) noteEl.blur(); // focus never carries over to the next ask
     var n = current(), t = n && n.ttl_secs, list = ttls(n);
@@ -191,7 +218,7 @@
   // ── actions ────────────────────────────────────────────────────────────
   function run(promise, okText) {
     S.busy = true; setMsg('working…'); render();
-    return promise.then(function () { setMsg(okText || '', 'ok'); })
+    return promise.then(function () { setMsg(okText || '', 'ok'); S.msgAt = Date.now(); })
       .catch(function (e) { setMsg(e.message || String(e), 'bad'); })
       .then(function () { S.busy = false; render(); });
   }
@@ -252,6 +279,17 @@
       if (name === 'yes' || name === 'confirm') {
         if (opts.length && S.sel == null) { setMsg('pick 1-' + Math.min(opts.length, 9) + ' first', 'bad'); return render(); }
         return approve(n, 'approve', opts.length ? opts[S.sel].value : null);
+      }
+      return;
+    }
+    if (isNumeric(n)) {
+      // YES/NO (and +/-) step the value; Enter sends it, or sends what was typed in the note field.
+      if (name === 'yes' || name === 'no') { S.num = numClamp(n, S.num + (name === 'yes' ? 1 : -1) * numStep(n)); setMsg(''); return render(); }
+      if (name === 'confirm') {
+        var nv = numAnswer(n);
+        if (nv == null) return render();
+        noteEl.value = '';
+        return answer(n, nv);
       }
       return;
     }
@@ -320,6 +358,12 @@
       row.push(btn('no', 'N', t === 'diff' ? 'Reject' : n.no_label || 'No', 'no', S.busy));
     } else if (t === 'ack') {
       row.push(btn('yes', 'Y', n.ack_label || 'Acknowledged', 'yes', S.busy));
+    } else if (t === 'numeric') {
+      h.push('<div class="num" id="c-num">' + esc(numFmt(S.num)) + (n.unit ? ' <span class="unit">' + esc(n.unit) + '</span>' : '')
+        + '<span class="range">' + esc(numRange(n)) + ' · step ' + esc(numFmt(numStep(n))) + '</span></div>');
+      row.push(btn('no', 'N', '\u2212' + numFmt(numStep(n)), 'no', S.busy));
+      row.push(btn('yes', 'Y', '+' + numFmt(numStep(n)), 'yes', S.busy));
+      row.push(btn('confirm', '\u23ce', 'send (M to type a number)', 'yes', S.busy));
     } else if (t === 'freetext') {
       row.push(btn('confirm', '⏎', 'send text (M to type)', 'yes', S.busy));
     } else if (!opts.length) {
@@ -337,7 +381,8 @@
     renderHeader(n);
     renderCard(n);
     $('c-noterow').hidden = !n;
-    noteEl.placeholder = n && n.question_type === 'freetext' ? 'M: type the answer, Enter sends, Esc leaves' : 'M: optional note, Esc leaves';
+    noteEl.placeholder = n && n.question_type === 'freetext' ? 'M: type the answer, Enter sends, Esc leaves'
+      : isNumeric(n) ? 'M: type a number (' + numRange(n) + '), Enter sends, Esc leaves' : 'M: optional note, Esc leaves';
     $('c-tools').innerHTML = [btn('prev', '←/K', 'prev'), btn('next', '→/J', 'next'), btn('note', 'M', 'note', '', !n),
       btn('snooze', 'S', 'snooze ' + SNOOZE_MINUTES + 'm', '', !n || S.busy), btn('dismiss', 'D', n && S.dismissArm === n.id ? 'dismiss?' : 'dismiss', n && S.dismissArm === n.id ? 'arm' : '', !n || S.busy),
       btn('reload', 'R', 'reload')].join('');
@@ -352,6 +397,7 @@
     normalize();
     if (S.queue.length !== before) return render();
     var n = current();
+    if (S.msgCls === 'ok' && S.msg && now - (S.msgAt || 0) > OK_MSG_MS) { setMsg(''); return render(); }
     if ($('c-clock')) $('c-clock').textContent = clock();
     if ($('c-bigclock')) $('c-bigclock').textContent = clock();
     if (n && $('c-age')) $('c-age').textContent = fmtAge(n.created_at, now);
@@ -380,7 +426,7 @@
       if (key === 'enter') {
         e.preventDefault();
         var n = current();
-        if (n && n.question_type === 'freetext') act('confirm'); else noteEl.blur();
+        if (n && (n.question_type === 'freetext' || isNumeric(n))) act('confirm'); else noteEl.blur();
       }
       return;
     }
@@ -390,6 +436,7 @@
       e.preventDefault(); return;
     }
     if (/^[1-9]$/.test(key)) { e.preventDefault(); act('pick', Number(key) - 1); return; }
+    if (isNumeric(current()) && /^[+=\-_]$/.test(key)) { e.preventDefault(); act(key === '+' || key === '=' ? 'yes' : 'no'); return; }
     if (KEYS[key]) { e.preventDefault(); act(KEYS[key]); }
   });
   root.addEventListener('click', function (e) {

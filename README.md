@@ -305,6 +305,7 @@ internet (no CDN scripts or fonts) and sizes everything in viewport units, so
 | `T` | cycle grant TTL 10m / 1h / 24h (approval asks only; defaults to the ask's `ttl_secs` if it is one of those, else 1h) |
 | `M`, `Esc` | focus / leave the note field (free-text asks: type the answer, `Enter` sends) |
 | `S` / `D` | snooze 15 minutes (capped at the deadline) / dismiss (press `D` twice within 2.5 s; any other key cancels) |
+| `Y` / `N` / `+` / `-` on a numeric ask | step the value up / down; `Enter` sends it, or `M` to type a number |
 | `Left`/`Right`, `K`/`J` | previous / next ask |
 | `Up`/`Down`, `PgUp`/`PgDn` | scroll the detail box |
 | `R` | reload the queue and recheck the sidecar |

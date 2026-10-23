@@ -33,6 +33,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .detail pre { padding: 1vh; white-space: pre-wrap; }
 .spacer { flex: 1; }
 .lock { flex: none; font-size: 3.4vh; font-weight: 700; }
+.num { flex: none; font-size: 9vh; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.num .unit { font-size: 4vh; font-weight: 600; opacity: .8; }
+.num .range { display: block; font-size: 2.6vh; font-weight: 500; opacity: .6; }
 .row { flex: none; display: flex; flex-wrap: wrap; gap: 1.2vh 1.2vw; }
 button { flex: 1 1 0; min-width: 12vw; min-height: 9vh; display: flex; align-items: center; justify-content: center;
   gap: 1vw; padding: 1vh 1.4vw; font: inherit; font-size: 3.6vh; color: var(--fg); cursor: pointer;
