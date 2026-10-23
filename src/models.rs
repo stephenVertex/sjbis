@@ -626,7 +626,10 @@ mod tests {
         assert_eq!(qt, QuestionType::Approval);
         assert_eq!(serde_json::to_value(&qt).unwrap(), json!("approval"));
         assert_eq!(qt.to_string(), "approval");
-        assert_eq!("approval".parse::<QuestionType>(), Ok(QuestionType::Approval));
+        assert_eq!(
+            "approval".parse::<QuestionType>(),
+            Ok(QuestionType::Approval)
+        );
     }
 
     #[test]
@@ -649,7 +652,10 @@ mod tests {
             resolve_ttl_secs(&QuestionType::Approval, None),
             Ok(Some(DEFAULT_APPROVAL_TTL_SECS))
         );
-        assert_eq!(resolve_ttl_secs(&QuestionType::Approval, Some(60)), Ok(Some(60)));
+        assert_eq!(
+            resolve_ttl_secs(&QuestionType::Approval, Some(60)),
+            Ok(Some(60))
+        );
         assert_eq!(resolve_ttl_secs(&QuestionType::YesNo, None), Ok(None));
         for bad in [0, -1, i64::MIN] {
             assert!(resolve_ttl_secs(&QuestionType::Approval, Some(bad)).is_err());
@@ -659,7 +665,10 @@ mod tests {
 
     #[test]
     fn parse_duration_matches_deadline_units() {
-        assert_eq!(parse_duration("90s").unwrap(), chrono::Duration::seconds(90));
+        assert_eq!(
+            parse_duration("90s").unwrap(),
+            chrono::Duration::seconds(90)
+        );
         assert_eq!(parse_duration("6m").unwrap(), chrono::Duration::minutes(6));
         assert_eq!(parse_duration("1h").unwrap(), chrono::Duration::hours(1));
         assert_eq!(parse_duration("2d").unwrap(), chrono::Duration::days(2));

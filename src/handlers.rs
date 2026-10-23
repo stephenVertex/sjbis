@@ -118,8 +118,12 @@ pub async fn ask(
     };
 
     // Validate / default the requested grant TTL (approval asks default to 1h).
-    let ttl_secs = resolve_ttl_secs(&question_type, req.ttl_secs)
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": e }))))?;
+    let ttl_secs = resolve_ttl_secs(&question_type, req.ttl_secs).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+    })?;
 
     // Parse deadline
     let deadline = req.deadline.as_ref().and_then(|d| {
@@ -1000,7 +1004,7 @@ mod tests {
             .expect_err("approval asks must reject plain answers");
         assert_eq!(err.0, StatusCode::CONFLICT);
         assert_eq!(
-            err.1 .0,
+            err.1.0,
             serde_json::json!({"error": "approval asks can only be answered by a signed grant"})
         );
     }
@@ -1008,7 +1012,10 @@ mod tests {
     #[test]
     fn plain_answer_allowed_on_open_non_approval() {
         for qt in ["yesno", "multichoice", "ack", "freetext"] {
-            assert!(check_plain_answer_allowed(&notification(qt, "open")).is_ok(), "{qt}");
+            assert!(
+                check_plain_answer_allowed(&notification(qt, "open")).is_ok(),
+                "{qt}"
+            );
         }
     }
 
@@ -1019,7 +1026,7 @@ mod tests {
                 .expect_err("closed notifications cannot be answered");
             assert_eq!(err.0, StatusCode::CONFLICT);
             assert_eq!(
-                err.1 .0["error"],
+                err.1.0["error"],
                 "notification already answered or cancelled"
             );
         }

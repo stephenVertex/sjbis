@@ -506,7 +506,14 @@ mod tests {
     }
 
     fn parse_ask(extra: &[&str]) -> Result<AskArgs, clap::Error> {
-        let mut argv = vec!["sjbis", "ask", "--question", "Deploy?", "--agent-name", "demo"];
+        let mut argv = vec![
+            "sjbis",
+            "ask",
+            "--question",
+            "Deploy?",
+            "--agent-name",
+            "demo",
+        ];
         argv.extend_from_slice(extra);
         Cli::try_parse_from(argv).map(|cli| match cli.command {
             Commands::Ask(args) => args,
@@ -538,9 +545,13 @@ mod tests {
             let args = parse_ask(&["--approval", &flag]).unwrap();
             assert!(args.ttl_secs().is_err(), "--ttl {bad} should be rejected");
         }
-        let err = parse_ask(&["--ttl", "1h"]).err().expect("--ttl requires --approval");
+        let err = parse_ask(&["--ttl", "1h"])
+            .err()
+            .expect("--ttl requires --approval");
         assert_eq!(err.kind(), ErrorKind::MissingRequiredArgument);
-        let err = parse_ask(&["--approval", "--yesno"]).err().expect("shapes conflict");
+        let err = parse_ask(&["--approval", "--yesno"])
+            .err()
+            .expect("shapes conflict");
         assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
