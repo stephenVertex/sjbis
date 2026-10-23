@@ -793,6 +793,12 @@ print("" if d.get("via")=="timed_out" else (d.get("answer") or ""))')
   This keeps automated workflows moving: the human gets the deadline to
   weigh in, and silence is treated as "use your judgement," not a hang.
 
+  EXCEPTION — approval asks (--approval):
+    A timeout on an approval ask carries no authority: the usual best-judgement-on-timeout rule does not apply.
+    On timed_out there is no grant: do NOT run `sjbis answer --via
+    caller-timeout`, and do not claim you were approved. Ask again, or
+    proceed without authority and say so.
+
 DAEMON
   `sjbis prime` auto-starts a LOCAL daemon if one isn't already running
   (see the status line at the top of this output). A remote daemon must
@@ -838,6 +844,25 @@ QUESTION TYPES
   --diff            Approve/reject a code diff
   --pick <file>     Pick from a list of items (JSON file)
   --schedule <file> Pick a time slot (JSON file)
+  --approval        Transient-authority approval (locked; see APPROVAL ASKS)
+
+APPROVAL ASKS (transient authority)
+  sjbis ask --approval --ttl 1h --question "Deploy to prod?" \
+    --agent-name deploybot --deadline 5m --json
+
+  --approval        Implies --blocking. May carry --choices "a,b,c".
+  --ttl 1h          Requested grant lifetime (same syntax as --deadline:
+                    10m, 1h, 1d). Default 1h. Must be > 0. Needs --approval.
+
+  Lock rule: an approval ask can only be answered by a signed grant from
+  a trusted device (iPhone Face ID, Mac Touch ID, Pi console YubiKey).
+  A plain answer (dashboard, `sjbis answer`, any --via) gets HTTP 409
+  {"error":"approval asks can only be answered by a signed grant"}, and
+  rules never auto-answer it. The dashboard shows a locked card ("answer
+  on a trusted device") with no answer controls; dismiss/snooze still work.
+
+  A timeout on an approval ask carries no authority: the usual best-judgement-on-timeout rule does not apply.
+  A timed_out result means NO approval. Never treat silence as consent.
 
 COMMON FLAGS
   --agent-name      Required. Identifies the calling agent.

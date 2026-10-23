@@ -40,7 +40,7 @@ chosen channel — stdout, exit code, webhook, or a file — or a timeout, or a
 Three things define every call:
 
 - **The question** — required free text. The human (and optionally the AI router) reads it.
-- **The answer shape** — one of `--yesno`, `--choices`, `--text`, `--number`, `--file`, `--diff`, `--ack`, `--pick`, `--schedule`. This picks the dashboard renderer. Skip it and pass `--guess-renderer` to let the AI choose.
+- **The answer shape** — one of `--yesno`, `--choices`, `--text`, `--number`, `--file`, `--diff`, `--ack`, `--pick`, `--schedule`, `--approval`. This picks the dashboard renderer. Skip it and pass `--guess-renderer` to let the AI choose.
 - **The agent name** — `--agent-name "OpenCode"`, required. Stable across runs of the same caller; drives the card's source line, its glyph/color identity, and rule-matching. Optional `--instance` appends per-session detail (e.g. `"Session s7b3d11"`).
 
 Plus a **reply channel** (`--reply-to`, default `stdout` when `--blocking`) and an
@@ -621,6 +621,33 @@ never build their own poll loops. Silence means "use your judgement," not a hang
 Always check the `note` field on a real answer — humans can attach follow-up
 context there.
 
+### Approval asks (transient authority)
+
+`--approval` posts a `question_type: "approval"` ask for
+`ta` (transient authority): a decision that must be provable
+later, not just answered. It is the one exception to the pattern above.
+
+```bash
+res=$(sjbis ask --approval --ttl 1h --question "Deploy to prod?" \
+        --agent-name deploybot --deadline 5m --json)
+```
+
+- `--approval` implies `--blocking`. It may carry `--choices a,b,c`.
+- `--ttl` is the grant lifetime the agent requests (same duration syntax as
+  `--deadline`: `10m`, `1h`, `1d`; default `1h`). It must be positive and
+  requires `--approval`. Over HTTP it is `ttl_secs`; `ttl_secs <= 0` is a 400.
+- **Lock rule:** an approval ask can only be answered by a signed grant from a
+  trusted device. A plain `POST /answer/{id}` (dashboard, `sjbis answer`,
+  including `--via caller-timeout`) returns `409` with
+  `{"error":"approval asks can only be answered by a signed grant"}`, and rules
+  never auto-answer it. The web dashboard renders a locked card (lock badge,
+  requester, verbatim question, detail, TTL, age, "answer on a trusted
+  device") with no answer controls; dismiss and snooze still work.
+- A timeout on an approval ask carries no authority: the usual best-judgement-on-timeout rule does not apply.
+  If the deadline passes, `via` is `"timed_out"` and there is no grant (a
+  later bead adds the signed `grant` field to the result): do not record an auto-pick and do not claim approval. Ask again, or
+  proceed without authority.
+
 ## API for Agents
 
 > The examples below use `http://localhost:7878` for brevity. From a **client**,
@@ -658,6 +685,10 @@ curl -X POST http://localhost:7878/answer/sjbis-AbCdEfGh \
   -H "Content-Type: application/json" \
   -d '{"answer": "Yes", "via": "dashboard", "note": "Security scan passed"}'
 ```
+
+Returns `409` for a notification that is no longer open, and `409`
+`{"error":"approval asks can only be answered by a signed grant"}` for any
+`approval` ask (see [Approval asks](#approval-asks-transient-authority)).
 
 ### POST /dismiss/{id} — mark as seen without answering
 
