@@ -718,7 +718,7 @@ function AckRenderer({ n, onAnswer }) {
 function PicklistRenderer({ n, onAnswer }) {
   const [q, setQ] = React.useState('');
   const [cursor, setCursor] = React.useState(0);
-  const items = n.items.filter((i) =>
+  const items = (n.items || []).filter((i) =>
     !q || (i.title + ' ' + i.meta).toLowerCase().includes(q.toLowerCase()));
   React.useEffect(() => { if (cursor >= items.length) setCursor(Math.max(0, items.length - 1)); }, [items.length, cursor]);
   useFocusKeys([
@@ -770,20 +770,21 @@ function PicklistRenderer({ n, onAnswer }) {
 }
 
 function ScheduleRenderer({ n, onAnswer }) {
-  const enabledIdx = n.slots.map((s, i) => s.disabled ? -1 : i).filter((i) => i >= 0);
+  const slots = n.slots || [];
+  const enabledIdx = slots.map((s, i) => s.disabled ? -1 : i).filter((i) => i >= 0);
   const [sel, setSel] = React.useState(enabledIdx[0] ?? null);
   useFocusKeys([
-    ...n.slots.map((s, i) => ({
+    ...slots.map((s, i) => ({
       match: (e) => e.key === String(i + 1) && !s.disabled,
       fn: () => setSel(i),
     })),
     { match: (e) => e.key === 'Enter' && sel !== null,
-      fn: () => onAnswer(`${n.slots[sel].day} · ${n.slots[sel].time}`) },
+      fn: () => onAnswer(`${slots[sel].day} · ${slots[sel].time}`) },
   ], [n, sel, onAnswer]);
   return (
     <>
       <div className="slots">
-        {n.slots.map((s, i) => (
+        {slots.map((s, i) => (
           <div
             key={i}
             className={'slot' + (s.disabled ? ' disabled' : '') + (sel === i ? ' selected' : '')}
@@ -801,7 +802,7 @@ function ScheduleRenderer({ n, onAnswer }) {
         <button
           className="btn-action primary"
           disabled={sel === null}
-          onClick={() => onAnswer(`${n.slots[sel].day} · ${n.slots[sel].time}`)}
+          onClick={() => onAnswer(`${slots[sel].day} · ${slots[sel].time}`)}
         >
           Confirm <span className="k">⏎</span>
         </button>

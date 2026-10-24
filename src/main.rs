@@ -301,18 +301,36 @@ async fn cmd_ask(args: cli::AskArgs) -> Result<()> {
         s.lines().map(|l| l.to_string()).collect::<Vec<_>>()
     });
 
-    // Build pick items from file path
+    // Build pick items from file path. A missing or malformed file is an
+    // error: posting a picklist with no items gives the dashboard nothing to
+    // render and the caller a question nobody can answer.
     let items = if let Some(ref path) = args.pick {
-        let content = tokio::fs::read_to_string(path).await.ok();
-        content.and_then(|c| serde_json::from_str::<Vec<PickItem>>(&c).ok())
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("cannot read --pick file {}: {}", path, e))?;
+        let items: Vec<PickItem> = serde_json::from_str(&content).map_err(|e| {
+            anyhow::anyhow!("invalid --pick JSON in {}; expected an array of {{\"id\",\"title\",\"meta\"}} objects: {}", path, e)
+        })?;
+        if items.is_empty() {
+            anyhow::bail!("--pick file {} has no items", path);
+        }
+        Some(items)
     } else {
         None
     };
 
-    // Build slots from file path
+    // Build slots from file path (same rules as --pick).
     let slots = if let Some(ref path) = args.schedule {
-        let content = tokio::fs::read_to_string(path).await.ok();
-        content.and_then(|c| serde_json::from_str::<Vec<Slot>>(&c).ok())
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(|e| anyhow::anyhow!("cannot read --schedule file {}: {}", path, e))?;
+        let slots: Vec<Slot> = serde_json::from_str(&content).map_err(|e| {
+            anyhow::anyhow!("invalid --schedule JSON in {}; expected an array of {{\"day\",\"time\"}} objects: {}", path, e)
+        })?;
+        if slots.is_empty() {
+            anyhow::bail!("--schedule file {} has no slots", path);
+        }
+        Some(slots)
     } else {
         None
     };
@@ -875,7 +893,7 @@ QUESTION TYPES
   --ack             Acknowledge-only (no data collected)
   --file            File upload request (use --accept ".pdf,.csv")
   --diff            Approve/reject a code diff
-  --pick <file>     Pick from a list of items (JSON file)
+  --pick <file>     Pick from a list of items (JSON file: [{"id","title","meta"}, ...])
   --schedule <file> Pick a time slot (JSON file)
   --approval        Transient-authority approval (locked; see APPROVAL ASKS)
 
