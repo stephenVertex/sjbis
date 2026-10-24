@@ -306,6 +306,7 @@ internet (no CDN scripts or fonts) and sizes everything in viewport units, so
 | `M`, `Esc` | focus / leave the note field (free-text asks: type the answer, `Enter` sends) |
 | `S` / `D` | snooze 15 minutes (capped at the deadline) / dismiss (press `D` twice within 2.5 s; any other key cancels) |
 | `Y` / `N` / `+` / `-` on a numeric ask | step the value up / down; `Enter` sends it, or `M` to type a number |
+| form asks | one sub-question at a time with the keys above; `Backspace` steps back; the last one submits the form |
 | `Left`/`Right`, `K`/`J` | previous / next ask |
 | `Up`/`Down`, `PgUp`/`PgDn` | scroll the detail box |
 | `R` | reload the queue and recheck the sidecar |

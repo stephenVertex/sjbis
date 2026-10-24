@@ -22,6 +22,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .urg.hot { background: var(--bad); color: #000; }
 .q { margin: 0; font-size: 6vh; line-height: 1.15; font-weight: 700; max-height: 22vh; overflow: auto; }
 .q.long { font-size: 4.4vh; }
+.q.xlong { font-size: 3.4vh; font-weight: 600; line-height: 1.25; max-height: 40vh; }
+.q.nodetail { max-height: 58vh; }
 .detail { flex: 1; min-height: 8vh; overflow: auto; padding: 1.2vh 2vw; font-size: 3.2vh; line-height: 1.35;
   background: var(--panel); border: 0.25vh solid var(--line); border-radius: 1vh; }
 .detail.plain { white-space: pre-wrap; }
@@ -33,6 +35,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .detail pre { padding: 1vh; white-space: pre-wrap; }
 .spacer { flex: 1; }
 .lock { flex: none; font-size: 3.4vh; font-weight: 700; }
+.formq { flex: none; font-size: 4.2vh; font-weight: 600; line-height: 1.2; }
+.formq .step { display: inline-block; margin-right: 1.2vw; padding: 0 1vw; border-radius: 1vh; background: var(--warn); color: #000; font-size: 3vh; }
 .num { flex: none; font-size: 9vh; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .num .unit { font-size: 4vh; font-weight: 600; opacity: .8; }
 .num .range { display: block; font-size: 2.6vh; font-weight: 500; opacity: .6; }

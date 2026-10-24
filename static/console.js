@@ -113,6 +113,27 @@
     }
     return [];
   }
+  // Forms: the console walks sub-questions one at a time. The "unit" is what
+  // the keys act on: the ask itself, or the current sub-question of a form,
+  // presented with the same fields a plain ask of that shape would have.
+  var FORM_SHAPES = { yesno: 'yesno', numeric: 'numeric', freetext: 'freetext', text: 'freetext', ack: 'ack', multichoice: 'multichoice' };
+  function isForm(n) { return !!(n && n.question_type === 'form' && Array.isArray(n.sub_questions) && n.sub_questions.length); }
+  function formSub(n) { return isForm(n) ? n.sub_questions[Math.min(S.formIdx || 0, n.sub_questions.length - 1)] : null; }
+  function unit(n) {
+    var sq = formSub(n);
+    if (!sq) return n;
+    return { question_type: FORM_SHAPES[sq.shape] || 'unsupported', question: sq.question, choices: sq.choices, min: sq.min, max: sq.max,
+      step: sq.step, default_value: sq['default'], unit: sq.unit, ack_label: sq.ack_label, key: sq.key };
+  }
+  function formReset() { S.formIdx = 0; S.formAnswers = {}; }
+  function formGoto(n, idx) { S.formIdx = idx; S.sel = null; S.num = numStart(unit(n)); noteEl.value = ''; setMsg(''); render(); }
+  // Record one sub-answer and move on; the last one submits the whole form as JSON, like the dashboard.
+  function submit(n, value) {
+    if (!isForm(n)) return answer(n, value);
+    S.formAnswers[formSub(n).key] = value;
+    if (S.formIdx + 1 < n.sub_questions.length) return formGoto(n, S.formIdx + 1);
+    return answer(n, JSON.stringify(S.formAnswers));
+  }
   function setMsg(text, cls) { S.msg = text || ''; S.msgCls = cls || ''; }
   function disarmDismiss(rerender) {
     S.dismissArm = null; S.dismissArmUntil = 0;
@@ -130,7 +151,8 @@
     if (id === S.cur) return;
     S.cur = id; S.sel = null; setMsg('');
     S.dismissArm = null; S.dismissArmUntil = 0;
-    S.num = numStart(current());
+    formReset();
+    S.num = numStart(unit(current()));
     noteEl.value = '';
     if (document.activeElement === noteEl) noteEl.blur(); // focus never carries over to the next ask
     var n = current(), t = n && n.ttl_secs, list = ttls(n);
@@ -249,8 +271,10 @@
     if (name === 'next') return step(1);
     if (name === 'reload') { setMsg(''); checkSidecar(); if (!es) connect(); return load(); }
     if (!n || S.busy) return;
-    var t = n.question_type, opts = options(n);
+    var u = unit(n), t = u.question_type, opts = options(u);
     if (name === 'note') { noteEl.focus(); return; }
+    if (name === 'back') { if (isForm(n) && S.formIdx > 0) formGoto(n, S.formIdx - 1); return; }
+    if (t === 'unsupported') { setMsg('this form has a sub-question the console cannot answer; open it on the dashboard', 'bad'); return render(); }
     if (isApproval(n) && !S.sidecarUp && /^(pick|yes|no|confirm|ttl)$/.test(name)) {
       setMsg('signing sidecar offline: ' + S.sidecarWhy, 'bad'); return render();
     }
@@ -282,30 +306,30 @@
       }
       return;
     }
-    if (isNumeric(n)) {
+    if (isNumeric(u)) {
       // YES/NO (and +/-) step the value; Enter sends it, or sends what was typed in the note field.
-      if (name === 'yes' || name === 'no') { S.num = numClamp(n, S.num + (name === 'yes' ? 1 : -1) * numStep(n)); setMsg(''); return render(); }
+      if (name === 'yes' || name === 'no') { S.num = numClamp(u, S.num + (name === 'yes' ? 1 : -1) * numStep(u)); setMsg(''); return render(); }
       if (name === 'confirm') {
-        var nv = numAnswer(n);
+        var nv = numAnswer(u);
         if (nv == null) return render();
         noteEl.value = '';
-        return answer(n, nv);
+        return submit(n, isForm(n) ? nv.split(' ')[0] : nv); // form sub-answers carry the bare number
       }
       return;
     }
     if (name === 'yes') {
-      if (t === 'yesno') return answer(n, n.yes_label || 'Yes');
-      if (t === 'diff') return answer(n, 'Approved');
-      if (t === 'ack') return answer(n, n.ack_label || 'Acknowledged');
+      if (t === 'yesno') return submit(n, u.yes_label || 'Yes');
+      if (t === 'diff') return submit(n, 'Approved');
+      if (t === 'ack') return submit(n, isForm(n) ? 'acknowledged' : u.ack_label || 'Acknowledged');
     }
     if (name === 'no') {
-      if (t === 'yesno') return answer(n, n.no_label || 'No');
-      if (t === 'diff') return answer(n, 'Rejected');
+      if (t === 'yesno') return submit(n, u.no_label || 'No');
+      if (t === 'diff') return submit(n, 'Rejected');
     }
     if (name === 'confirm') {
-      if (S.sel != null && opts[S.sel]) return answer(n, opts[S.sel].value);
-      if (t === 'freetext' && note()) { var text = note(); noteEl.value = ''; return answer(n, text); }
-      if (t === 'ack') return answer(n, n.ack_label || 'Acknowledged');
+      if (S.sel != null && opts[S.sel]) return submit(n, opts[S.sel].value);
+      if (t === 'freetext' && note()) { var text = note(); noteEl.value = ''; return submit(n, text); }
+      if (t === 'ack') return submit(n, isForm(n) ? 'acknowledged' : u.ack_label || 'Acknowledged');
     }
   }
 
@@ -332,14 +356,19 @@
       return;
     }
     var keepScroll = card.dataset.id === n.id && $('c-detail') ? $('c-detail').scrollTop : 0;
-    var appr = isApproval(n), opts = options(n), t = n.question_type, down = appr && !S.sidecarUp;
+    var u = unit(n), appr = isApproval(n), opts = options(u), t = u.question_type, down = appr && !S.sidecarUp;
     var dis = S.busy || down, h = [];
     h.push('<div class="meta"><b>' + esc(n.agent_name) + '</b> · ' + esc(n.src) + ' · <span class="urg' + (n.urgency >= 4 ? ' hot' : '')
       + '">U' + esc(n.urgency) + '</span> · <span id="c-age">' + esc(fmtAge(n.created_at, Date.now())) + '</span></div>');
-    h.push('<h1 class="q' + (n.question.length > 110 ? ' long' : '') + '">' + esc(n.question) + '</h1>');
+    var hasDetail = !!(n.detail_markdown || n.detail);
+    h.push('<h1 class="q' + (n.question.length > 300 ? ' xlong' : n.question.length > 110 ? ' long' : '') + (hasDetail ? '' : ' nodetail')
+      + '" id="c-q">' + esc(n.question) + '</h1>');
     if (n.detail_markdown) h.push('<div class="detail" id="c-detail">' + md(n.detail_markdown) + '</div>');
     else if (n.detail) h.push('<div class="detail plain" id="c-detail">' + esc(n.detail) + '</div>');
     else h.push('<div class="spacer"></div>');
+    if (isForm(n)) {
+      h.push('<div class="formq"><span class="step">' + (S.formIdx + 1) + ' / ' + n.sub_questions.length + '</span>' + esc(formSub(n).question) + '</div>');
+    }
     if (appr) {
       h.push(down ? '<div class="lock bad">🔒 signing sidecar offline: approvals disabled (' + esc(S.sidecarWhy) + ')</div>'
         : '<div class="lock warn">🔒 signed approval · signer ' + esc(S.signer) + (n.once ? ' · single-use' : '') + '</div>');
@@ -354,15 +383,15 @@
       row.push(btn('no', 'N', 'deny', 'no', dis));
       row.push(btn('ttl', 'T', 'ttl ' + ttls(n)[S.ttlIdx][1], '', dis));
     } else if (t === 'yesno' || t === 'diff') {
-      row.push(btn('yes', 'Y', t === 'diff' ? 'Approve' : n.yes_label || 'Yes', 'yes', S.busy));
-      row.push(btn('no', 'N', t === 'diff' ? 'Reject' : n.no_label || 'No', 'no', S.busy));
+      row.push(btn('yes', 'Y', t === 'diff' ? 'Approve' : u.yes_label || 'Yes', 'yes', S.busy));
+      row.push(btn('no', 'N', t === 'diff' ? 'Reject' : u.no_label || 'No', 'no', S.busy));
     } else if (t === 'ack') {
-      row.push(btn('yes', 'Y', n.ack_label || 'Acknowledged', 'yes', S.busy));
+      row.push(btn('yes', 'Y', u.ack_label || 'Acknowledged', 'yes', S.busy));
     } else if (t === 'numeric') {
-      h.push('<div class="num" id="c-num">' + esc(numFmt(S.num)) + (n.unit ? ' <span class="unit">' + esc(n.unit) + '</span>' : '')
-        + '<span class="range">' + esc(numRange(n)) + ' · step ' + esc(numFmt(numStep(n))) + '</span></div>');
-      row.push(btn('no', 'N', '\u2212' + numFmt(numStep(n)), 'no', S.busy));
-      row.push(btn('yes', 'Y', '+' + numFmt(numStep(n)), 'yes', S.busy));
+      h.push('<div class="num" id="c-num">' + esc(numFmt(S.num)) + (u.unit ? ' <span class="unit">' + esc(u.unit) + '</span>' : '')
+        + '<span class="range">' + esc(numRange(u)) + ' · step ' + esc(numFmt(numStep(u))) + '</span></div>');
+      row.push(btn('no', 'N', '\u2212' + numFmt(numStep(u)), 'no', S.busy));
+      row.push(btn('yes', 'Y', '+' + numFmt(numStep(u)), 'yes', S.busy));
       row.push(btn('confirm', '\u23ce', 'send (M to type a number)', 'yes', S.busy));
     } else if (t === 'freetext') {
       row.push(btn('confirm', '⏎', 'send text (M to type)', 'yes', S.busy));
@@ -370,6 +399,7 @@
       row.push('<div class="lock warn">open this ask on the dashboard to answer it</div>');
     }
     if (opts.length && !appr) row.push(btn('confirm', '⏎', 'confirm', 'yes', S.busy || S.sel == null));
+    if (isForm(n) && S.formIdx > 0) row.push(btn('back', '\u232b', 'back a step', '', S.busy));
     h.push('<div class="row">' + row.join('') + '</div>');
     h.push('<div class="msg ' + S.msgCls + '">' + esc(S.msg) + '</div>');
     card.innerHTML = h.join('');
@@ -381,8 +411,9 @@
     renderHeader(n);
     renderCard(n);
     $('c-noterow').hidden = !n;
-    noteEl.placeholder = n && n.question_type === 'freetext' ? 'M: type the answer, Enter sends, Esc leaves'
-      : isNumeric(n) ? 'M: type a number (' + numRange(n) + '), Enter sends, Esc leaves' : 'M: optional note, Esc leaves';
+    var u = n && unit(n);
+    noteEl.placeholder = u && u.question_type === 'freetext' ? 'M: type the answer, Enter sends, Esc leaves'
+      : isNumeric(u) ? 'M: type a number (' + numRange(u) + '), Enter sends, Esc leaves' : 'M: optional note, Esc leaves';
     $('c-tools').innerHTML = [btn('prev', '←/K', 'prev'), btn('next', '→/J', 'next'), btn('note', 'M', 'note', '', !n),
       btn('snooze', 'S', 'snooze ' + SNOOZE_MINUTES + 'm', '', !n || S.busy), btn('dismiss', 'D', n && S.dismissArm === n.id ? 'dismiss?' : 'dismiss', n && S.dismissArm === n.id ? 'arm' : '', !n || S.busy),
       btn('reload', 'R', 'reload')].join('');
@@ -405,7 +436,7 @@
 
   // ── input ──────────────────────────────────────────────────────────────
   var KEYS = { y: 'yes', n: 'no', enter: 'confirm', t: 'ttl', m: 'note', s: 'snooze', d: 'dismiss',
-    arrowleft: 'prev', k: 'prev', arrowright: 'next', j: 'next', r: 'reload' };
+    arrowleft: 'prev', k: 'prev', arrowright: 'next', j: 'next', r: 'reload', backspace: 'back' };
   document.addEventListener('keydown', function (e) {
     // Ctrl+Alt+Shift+<key> is a "hard" key (the Stream Deck sends these): it
     // acts even while the note field has focus. The desktop owns plain
@@ -426,17 +457,28 @@
       if (key === 'enter') {
         e.preventDefault();
         var n = current();
-        if (n && (n.question_type === 'freetext' || isNumeric(n))) act('confirm'); else noteEl.blur();
+        var u = n && unit(n);
+        if (u && (u.question_type === 'freetext' || isNumeric(u))) act('confirm'); else noteEl.blur();
       }
       return;
     }
-    var d = $('c-detail');
-    if (d && (key === 'pagedown' || key === 'pageup' || key === 'arrowdown' || key === 'arrowup')) {
-      d.scrollTop += (key === 'pagedown' || key === 'arrowdown' ? 1 : -1) * d.clientHeight * 0.8;
+    if (key === 'pagedown' || key === 'pageup' || key === 'arrowdown' || key === 'arrowup') {
+      // Scroll whichever pane still has somewhere to go in that direction: a long
+      // question first (it sits above the detail), then the detail pane.
+      var dir = key === 'pagedown' || key === 'arrowdown' ? 1 : -1;
+      var panes = dir > 0 ? [$('c-q'), $('c-detail')] : [$('c-detail'), $('c-q')];
+      for (var pi = 0; pi < panes.length; pi++) {
+        var el = panes[pi];
+        if (!el || el.scrollHeight <= el.clientHeight + 1) continue;
+        var atEnd = dir > 0 ? el.scrollTop + el.clientHeight >= el.scrollHeight - 1 : el.scrollTop <= 0;
+        if (atEnd) continue;
+        el.scrollTop += dir * el.clientHeight * 0.8;
+        break;
+      }
       e.preventDefault(); return;
     }
     if (/^[1-9]$/.test(key)) { e.preventDefault(); act('pick', Number(key) - 1); return; }
-    if (isNumeric(current()) && /^[+=\-_]$/.test(key)) { e.preventDefault(); act(key === '+' || key === '=' ? 'yes' : 'no'); return; }
+    if (isNumeric(unit(current())) && /^[+=\-_]$/.test(key)) { e.preventDefault(); act(key === '+' || key === '=' ? 'yes' : 'no'); return; }
     if (KEYS[key]) { e.preventDefault(); act(KEYS[key]); }
   });
   root.addEventListener('click', function (e) {

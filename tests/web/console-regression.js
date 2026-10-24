@@ -199,6 +199,41 @@
     await waitFor(() => h.answers.length === before + 2, 'typed number sends');
     assert(h.answers[before + 1].body.answer === '45' && !('note' in h.answers[before + 1].body), 'typed numeric answer has no unit and no note');
 
+    // long questions get a smaller face, more height when there is no detail, and the scroll keys reach them
+    es.emit({ event: 'notification_created', notification: ask('c-longq', 11, { question: 'Long question. ' + 'Why is this so long? '.repeat(160), question_type: 'yesno' }) });
+    await waitFor(() => question().startsWith('Long question.'), 'long question appears');
+    assert($('#c-q').classList.contains('xlong') && $('#c-q').classList.contains('nodetail'), 'very long question without detail is marked xlong + nodetail');
+    assert($('#c-q').scrollHeight > $('#c-q').clientHeight, 'long question overflows its box');
+    key('ArrowDown');
+    assert($('#c-q').scrollTop > 0, 'ArrowDown scrolls the question text');
+    key('ArrowUp');
+    assert($('#c-q').scrollTop === 0, 'ArrowUp scrolls it back');
+    key('y');
+    await waitFor(() => !question() || !question().startsWith('Long question.'), 'long question answered');
+
+    // forms: one sub-question at a time, Backspace steps back, final answer is the dashboard's JSON
+    const beforeForm = h.answers.length;
+    es.emit({ event: 'notification_created', notification: ask('c-form', 10, { question: 'Console form', question_type: 'form', sub_questions: [
+      { key: 'ok', question: 'Mount it?', shape: 'yesno' },
+      { key: 'color', question: 'Which colour?', shape: 'multichoice', choices: [{ value: 'red', label: 'Red' }, { value: 'green', label: 'Green' }] },
+      { key: 'count', question: 'How many?', shape: 'numeric', min: 0, max: 10, step: 1, default: 3 },
+      { key: 'name', question: 'Call it?', shape: 'text' },
+    ] }) });
+    await waitFor(() => question() === 'Console form', 'form ask appears');
+    assert(text('#c-card .formq').startsWith('1 / 4') && text('#c-card .formq').includes('Mount it?'), 'form shows step 1 of 4 with its sub-question');
+    key('n');
+    assert(text('#c-card .formq').startsWith('2 / 4'), 'answering a sub-question advances');
+    key('Backspace');
+    assert(text('#c-card .formq').startsWith('1 / 4'), 'Backspace steps back');
+    key('y'); key('2'); key('Enter');
+    assert(text('#c-card .formq').startsWith('3 / 4') && text('#c-num').startsWith('3'), 'choice sub-question confirmed; numeric shows its default');
+    key('y'); key('Enter');
+    assert(text('#c-card .formq').startsWith('4 / 4'), 'numeric sub-question sent');
+    key('m'); $('#c-note').value = 'kiosk'; key('Enter', $('#c-note'));
+    await waitFor(() => h.answers.length === beforeForm + 1, 'last sub-question submits the form');
+    assert(h.answers[beforeForm].id === 'c-form' && h.answers[beforeForm].body.answer === JSON.stringify({ ok: 'Yes', color: 'green', count: '4', name: 'kiosk' }),
+      'form answer is the JSON object of sub-answers');
+
     es.onerror(new Event('error'));
     assert(text('#c-hdr').includes('reconnecting'), 'SSE error shows reconnecting');
     await waitFor(() => h.sources.length >= 2 && text('#c-hdr').includes('live'), 'SSE reconnects', 4000);
