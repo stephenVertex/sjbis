@@ -13,7 +13,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -139,23 +139,49 @@ pub async fn get_grant_status(
 pub struct ListQuery {
     pub ask: Option<String>,
     pub renews: Option<String>,
+    /// RFC 3339 timestamp: grants issued at or after it, newest first (`ta log`).
+    pub since: Option<String>,
+    /// With `since`: only grants whose record says this agent asked.
+    pub agent: Option<String>,
+    /// With `since`: cap on the number of rows (default 200, max 1000).
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ListFilter {
     Ask(String),
     Renews(String),
+    Since {
+        since: DateTime<Utc>,
+        agent: Option<String>,
+        limit: u32,
+    },
 }
 
-/// Exactly one of `ask` or `renews`, non-empty.
+const LIST_DEFAULT_LIMIT: u32 = 200;
+const LIST_MAX_LIMIT: u32 = 1000;
+
+/// Exactly one of `ask`, `renews` or `since`, non-empty. `agent` and `limit`
+/// only qualify `since`.
 pub fn list_filter(q: ListQuery) -> Result<ListFilter, GrantError> {
-    match (q.ask, q.renews) {
-        (Some(a), None) if !a.is_empty() => Ok(ListFilter::Ask(a)),
-        (None, Some(r)) if !r.is_empty() => Ok(ListFilter::Renews(r)),
-        _ => Err(GrantError::Malformed(
-            "pass exactly one non-empty query parameter: ask=<notification id> or renews=<grant id>"
+    let malformed = || {
+        GrantError::Malformed(
+            "pass exactly one non-empty query parameter: ask=<notification id>, renews=<grant id> or since=<rfc3339>"
                 .to_string(),
-        )),
+        )
+    };
+    match (q.ask, q.renews, q.since) {
+        (Some(a), None, None) if !a.is_empty() => Ok(ListFilter::Ask(a)),
+        (None, Some(r), None) if !r.is_empty() => Ok(ListFilter::Renews(r)),
+        (None, None, Some(t)) if !t.is_empty() => {
+            let since = DateTime::parse_from_rfc3339(&t)
+                .map_err(|e| GrantError::Malformed(format!("since: not an RFC 3339 timestamp ({e})")))?
+                .with_timezone(&Utc);
+            let agent = q.agent.filter(|a| !a.is_empty());
+            let limit = q.limit.unwrap_or(LIST_DEFAULT_LIMIT).clamp(1, LIST_MAX_LIMIT);
+            Ok(ListFilter::Since { since, agent, limit })
+        }
+        _ => Err(malformed()),
     }
 }
 
@@ -167,6 +193,7 @@ pub async fn list_grants(
     let grants = match list_filter(q).map_err(grant_err)? {
         ListFilter::Ask(id) => state.db.list_grants_by_notification(&id).await,
         ListFilter::Renews(id) => state.db.list_grants_by_renews(&id).await,
+        ListFilter::Since { since, agent, limit } => state.db.list_grants_since(since, agent.as_deref(), limit).await,
     }
     .map_err(db_err)?;
     let now = Utc::now();
@@ -225,23 +252,45 @@ mod tests {
 
     #[test]
     fn list_filter_requires_exactly_one_param() {
-        let q = |ask: Option<&str>, renews: Option<&str>| ListQuery {
+        let q = |ask: Option<&str>, renews: Option<&str>, since: Option<&str>| ListQuery {
             ask: ask.map(String::from),
             renews: renews.map(String::from),
+            since: since.map(String::from),
+            ..Default::default()
         };
         assert_eq!(
-            list_filter(q(Some("sjbis-1"), None)),
+            list_filter(q(Some("sjbis-1"), None, None)),
             Ok(ListFilter::Ask("sjbis-1".into()))
         );
         assert_eq!(
-            list_filter(q(None, Some("ta-abcdef"))),
+            list_filter(q(None, Some("ta-abcdef"), None)),
             Ok(ListFilter::Renews("ta-abcdef".into()))
         );
+        let t = "2026-10-23T20:00:00Z";
+        assert_eq!(
+            list_filter(q(None, None, Some(t))),
+            Ok(ListFilter::Since {
+                since: DateTime::parse_from_rfc3339(t).unwrap().with_timezone(&Utc),
+                agent: None,
+                limit: LIST_DEFAULT_LIMIT,
+            })
+        );
+        let with_agent = ListQuery { agent: Some("deploybot".into()), limit: Some(5000), ..q(None, None, Some(t)) };
+        match list_filter(with_agent).unwrap() {
+            ListFilter::Since { agent, limit, .. } => {
+                assert_eq!(agent.as_deref(), Some("deploybot"));
+                assert_eq!(limit, LIST_MAX_LIMIT);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
         for bad in [
-            q(None, None),
-            q(Some("a"), Some("b")),
-            q(Some(""), None),
-            q(None, Some("")),
+            q(None, None, None),
+            q(Some("a"), Some("b"), None),
+            q(Some("a"), None, Some(t)),
+            q(Some(""), None, None),
+            q(None, Some(""), None),
+            q(None, None, Some("")),
+            q(None, None, Some("yesterday")),
         ] {
             let err = list_filter(bad).unwrap_err();
             assert_eq!(err.http_status(), 400);

@@ -539,6 +539,26 @@ impl Db {
         rows.iter().map(Self::row_to_grant).collect()
     }
 
+    /// Grants issued at or after `since`, newest first, optionally only those
+    /// whose signed record names `agent` as the asker (`ta log`).
+    pub async fn list_grants_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+        agent: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<StoredGrant>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {GRANT_COLS} FROM grants WHERE issued_at >= $1 AND ($2::text IS NULL OR record->>'asked_by' = $2) \
+             ORDER BY issued_at DESC, created_at DESC LIMIT $3"
+        ))
+        .bind(since)
+        .bind(agent)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(Self::row_to_grant).collect()
+    }
+
     /// Grants whose signed record renews `id` (reauth children), oldest first.
     pub async fn list_grants_by_renews(&self, id: &str) -> Result<Vec<StoredGrant>> {
         let rows = sqlx::query(&format!(

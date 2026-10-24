@@ -822,6 +822,7 @@ pinned registry, never keys served by the daemon.
 | `POST /grants` | Body: the envelope. Verify, store, apply. `201` with `{envelope, status}`. |
 | `GET /grants/{id}` | `{envelope, status}` |
 | `GET /grants?ask=ID` | Array of `{envelope, status}` for grants answering notification `ID` |
+| `GET /grants?since=RFC3339[&agent=NAME][&limit=N]` | Grants issued at or after `since`, newest first (default 200, max 1000); what `ta log` reads |
 | `GET /grants?renews=ID` | Array of `{envelope, status}` whose signed `renews` is `ID` (reauth children) |
 | `GET /grants/{id}/status` | `{expired, revoked_by, claimed_by, claimed_at}` |
 | `POST /grants/{id}/claim` | Body `{"by": "agent-y"}`. Consume a `once` grant; returns `{envelope, status}` |
