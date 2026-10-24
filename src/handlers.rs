@@ -28,6 +28,8 @@ pub struct AppState {
     pub router: Arc<Option<AiRouter>>,
     pub waiters: Waiters,
     pub apns: Arc<Mutex<Option<ApnsClient>>>,
+    /// Web Push to installed phone web apps (None: no VAPID key could be loaded).
+    pub webpush: crate::push_handlers::WebPushHandle,
 }
 
 fn db_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<serde_json::Value>) {
@@ -249,6 +251,7 @@ pub async fn ask(
 
     // Broadcast to all SSE clients
     state.broadcaster.broadcast(&SseEvent::NotificationCreated { notification: notification.clone() });
+    crate::push_handlers::push_created(&state, &notification);
 
     // Send push notifications to registered iOS devices
     if notification.urgency >= 2 {
@@ -344,6 +347,7 @@ pub async fn answer(
 
     // Broadcast
     state.broadcaster.broadcast(&SseEvent::NotificationAnswered { envelope: envelope.clone() });
+    crate::push_handlers::push_closed(&state, &id, &updated.agent_name, &format!("answered: {}", envelope.answer_label.clone().or(envelope.answer.clone()).unwrap_or_default()));
 
     // Deliver response back to caller (webhook, file, etc.)
     tokio::spawn(deliver_response(updated.clone(), req.answer.clone(), envelope.clone()));
@@ -363,6 +367,7 @@ pub async fn cancel(
             }
             state.db.update_status(&id, NotificationStatus::Cancelled).await.map_err(db_err)?;
             state.broadcaster.broadcast(&SseEvent::NotificationCancelled { id: id.clone() });
+            crate::push_handlers::push_closed(&state, &id, &notif.agent_name, "cancelled by the agent");
             Ok(StatusCode::NO_CONTENT)
         }
         Ok(None) => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
@@ -413,6 +418,7 @@ pub async fn dismiss(
     }
 
     state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
+    crate::push_handlers::push_closed(&state, &id, &notif.agent_name, "dismissed");
 
     Ok(Json(envelope))
 }

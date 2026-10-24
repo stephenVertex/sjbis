@@ -7,6 +7,7 @@ mod grants;
 mod handlers;
 mod models;
 mod push;
+mod push_handlers;
 mod router;
 mod rules;
 mod sse;
@@ -14,6 +15,7 @@ mod triage;
 mod triage_cli;
 mod upgrade;
 mod version;
+mod webpush;
 
 use anyhow::{Context, Result};
 use clap::Parser;

@@ -672,6 +672,7 @@ mod tests {
             router: Arc::new(None::<AiRouter>),
             waiters: Arc::new(Mutex::new(HashMap::new())),
             apns: Arc::new(Mutex::new(None)),
+            webpush: Arc::new(None),
         }
     }
 

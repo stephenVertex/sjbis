@@ -1,0 +1,16 @@
+{
+  "name": "sjbis",
+  "short_name": "sjbis",
+  "description": "Answer agent asks and sign transient-authority grants from your phone.",
+  "id": "phone",
+  "start_url": "phone",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0c0f",
+  "theme_color": "#0b0c0f",
+  "icons": [
+    { "src": "phone-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "phone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

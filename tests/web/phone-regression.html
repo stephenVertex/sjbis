@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!-- Serve the repository root over HTTP, then open /tests/web/phone-regression.html.
+     e.g. `python3 -m http.server 8000` and visit http://localhost:8000/tests/web/phone-regression.html;
+     body[data-regression] becomes "passed" or "failed". Needs a secure context (localhost) for WebCrypto. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SJBIS phone regression</title>
+<link rel="stylesheet" href="../../static/phone.css" />
+<style>
+  .regression-status { position: fixed; z-index: 1000; right: 16px; bottom: 16px; width: min(420px, calc(100vw - 32px));
+    padding: 14px 16px; border: 1px solid rgba(255,255,255,0.18); border-radius: 10px; background: rgba(11,12,15,0.96);
+    color: #f4f3ee; font: 12px/1.5 monospace; }
+  .regression-status h2 { margin: 0 0 8px; color: #ffb341; font-size: 13px; }
+  .regression-status ol { max-height: 180px; margin: 8px 0 0; padding-left: 22px; overflow: auto; }
+  .regression-status .pass { color: #c7f33d; }
+  .regression-status .fail { color: #ff3d7f; }
+</style>
+</head>
+<body>
+<div id="phone"></div>
+<aside class="regression-status" aria-live="polite">
+  <h2 id="regression-title">Phone regression: running</h2>
+  <ol id="regression-results"></ol>
+</aside>
+<script src="../../static/time.js"></script>
+<script src="../../static/phone-crypto.js"></script>
+<script src="phone-regression.js"></script>
+<script src="../../static/phone.js"></script>
+</body>
+</html>

@@ -82,6 +82,7 @@ pub async fn post_grant(
                     envelope: envelope.clone(),
                 });
             let answer = envelope.answer.clone().unwrap_or_default();
+            crate::push_handlers::push_closed(&state, &notif.id, &notif.agent_name, &format!("{} \u{00b7} {} by {}", record.decision.as_str(), stored.id, record.signer));
             tokio::spawn(deliver_response(notif, answer, envelope));
         }
         Record::Revoke(record) => {

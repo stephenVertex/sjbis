@@ -195,6 +195,11 @@ impl Registry {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+
+    /// The pinned signers, in file order.
+    pub fn signers(&self) -> impl Iterator<Item = &Signer> {
+        self.entries.iter().map(|e| &e.signer)
+    }
 }
 
 /// `$SJBIS_SIGNERS`, else `~/.config/sjbis/signers.toml`.

@@ -341,6 +341,66 @@ Browser regression: serve the repository root over HTTP
 becomes `passed` or `failed`. `focus-regression.html` and
 `triage-regression.html` in the same directory run the same way.
 
+## Phone (iOS Home Screen web app)
+
+`GET /phone` serves a phone-sized client: a list of open asks, one ask at a
+time to answer with big buttons, and Settings. Install it from Safari with
+Share → **Add to Home Screen** and open it from the icon: iOS only delivers
+Web Push to installed web apps, and the page keeps its state (key, device id)
+in IndexedDB, which iOS does not evict for Home Screen apps. No Apple
+developer account is involved; the daemon pushes through the browser's push
+service with VAPID (RFC 8292) and `aes128gcm` payload encryption (RFC 8291).
+
+The page must be served over HTTPS (service workers and WebCrypto need a
+secure context). On the tailnet, `tailscale serve --bg --https=7443
+http://127.0.0.1:7878` on the daemon host gives
+`https://<host>.<tailnet>.ts.net:7443/phone` with a valid certificate.
+
+Answering:
+
+- Plain asks POST `/answer/{id}` with `via: "phone"`: yes/no, choices, picklist,
+  schedule, numeric (stepper or typed), free text (with suggestions), ack,
+  diff (approve/reject), forms one sub-question at a time (the last one
+  submits the JSON of sub-answers). Snooze 15 m, and dismiss (two taps).
+- Approval asks are **signed on the phone**. On first run the page generates
+  a non-extractable WebCrypto P-256 key in IndexedDB; Settings shows its
+  signer id (`phone@iphone`) and public key, and the `ta signers add …`
+  command to pin it. The daemon refuses grants from unpinned keys, so until
+  the key is in `~/.config/sjbis/signers.toml` the page says so and keeps the
+  approve/deny buttons disabled. Once pinned, approve/deny builds the grant
+  record exactly as `ta approve` does (verbatim question, chosen TTL, note,
+  `once`, `renews`), signs it, posts the envelope to `POST /grants`, and shows
+  the `ta-…` id. The grant verifies with `ta verify` anywhere the key is
+  pinned (`static/phone-crypto.js` holds the wire-format code; a node run of
+  it verifies VALID with the Rust `ta verify --record`).
+- Opening the app from a push banner opens that ask (or says it was already
+  answered, by whom).
+
+Push: Settings → **enable notifications** asks for permission, subscribes
+with the daemon's VAPID public key, and registers the subscription. Every new
+open ask is pushed (title: agent, body: the question); when an ask is
+answered, cancelled or dismissed anywhere, a quiet push replaces its banner.
+**send a test push** round-trips one. A dead subscription (push service
+answers 404/410) is dropped automatically.
+
+Daemon side: the VAPID key is `~/.config/sjbis/vapid.pem` (generated on
+first start; override with `SJBIS_VAPID_KEY`), the contact claim is
+`SJBIS_VAPID_SUBJECT` (`mailto:` or `https:`), devices live in the
+`push_subscriptions` table.
+
+| Endpoint | Does |
+|---|---|
+| `GET /push/vapid` | `{enabled, public_key, subject}`; `public_key` is base64url of the uncompressed P-256 point (the `applicationServerKey`) |
+| `POST /push/register` | `{device_id, subscription?: {endpoint, keys: {p256dh, auth}}, device_name?, signer_id?, pubkey?, user_agent?}`; upserts (absent fields keep their stored value). Returns `{ok, device_id, enrolled, push}` where `enrolled` means `signer_id` is pinned with exactly `pubkey` |
+| `POST /push/unregister` | `{device_id}` forgets the device |
+| `GET /push/devices` | Registered devices without their push secrets (`enrolled`, `push`, `last_push_at`, `last_error`) |
+| `POST /push/test` | `{device_id?}` sends a test push to one or every subscribed device |
+| `GET /signers` | The daemon's pinned signer registry (`id, method, device, pubkey, added`) |
+
+Browser regression: `tests/web/phone-regression.html` (same serve-the-repo
+recipe as the console one; it signs a real envelope with WebCrypto and
+verifies it).
+
 ## Architecture
 
 ```

@@ -5,6 +5,8 @@ use crate::db::Db;
 use crate::router::AiRouter;
 use crate::sse::Broadcaster;
 use crate::push::ApnsClient;
+use crate::push_handlers;
+use crate::webpush::WebPush;
 use axum::{
     response::Redirect,
     routing::{delete, get, get_service, post},
@@ -110,6 +112,12 @@ fn api_routes() -> Router<AppState> {
         .route("/grants/{id}", get(get_grant))
         .route("/grants/{id}/status", get(get_grant_status))
         .route("/grants/{id}/claim", post(claim_grant))
+        .route("/push/vapid", get(push_handlers::vapid))
+        .route("/push/register", post(push_handlers::register))
+        .route("/push/unregister", post(push_handlers::unregister))
+        .route("/push/devices", get(push_handlers::devices))
+        .route("/push/test", post(push_handlers::test_push))
+        .route("/signers", get(push_handlers::signers))
         .merge(crate::triage::http::routes())
 }
 
@@ -119,8 +127,10 @@ where
 {
     let index = static_dir.join("index.html");
     let console = static_dir.join("console.html");
+    let phone = static_dir.join("phone.html");
     Router::new()
         .route_service("/console", get_service(ServeFile::new(console)))
+        .route_service("/phone", get_service(ServeFile::new(phone)))
         .route_service("/", get_service(ServeFile::new(index.clone())))
         .route_service("/index.html", get_service(ServeFile::new(index.clone())))
         .route_service(
@@ -211,12 +221,25 @@ pub async fn run_daemon(
         None
     };
 
+    // Web Push for the phone web app: generate/load the VAPID key.
+    let webpush = match WebPush::from_env() {
+        Ok(wp) => {
+            tracing::info!("web push enabled (VAPID key {}, subject {})", crate::webpush::key_path().display(), wp.subject());
+            Some(Arc::new(wp))
+        }
+        Err(e) => {
+            tracing::warn!("web push disabled: {e:#}");
+            None
+        }
+    };
+
     let state = AppState {
         db,
         broadcaster: Broadcaster::new(),
         router: Arc::new(router),
         waiters: Arc::new(Mutex::new(HashMap::new())),
         apns: Arc::new(Mutex::new(apns)),
+        webpush: Arc::new(webpush),
     };
 
     let app = build_app(api_routes(), Path::new("static"), &base_path)
@@ -422,6 +445,7 @@ mod tests {
             router: Arc::new(None),
             waiters: Arc::new(Mutex::new(HashMap::new())),
             apns: Arc::new(Mutex::new(None)),
+            webpush: Arc::new(None),
         };
         let app: Router = api_routes().with_state(state);
         let send = |method: Method, uri: &str, body: &'static str| {

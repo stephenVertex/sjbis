@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<!-- sjbis-phone: phone-sized ask client. Install it to the iOS Home Screen (Share → Add to Home Screen)
+     and it can receive Web Push and sign ta grants with a key held in the browser. No framework. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="sjbis" />
+<meta name="theme-color" content="#0b0c0f" />
+<title>SJBIS · Phone</title>
+<script>
+// Resolve the daemon base path (e.g. /sjbis) from /phone or /phone.html.
+(function () {
+  var basePath = window.location.pathname.replace(/\/phone(\.html)?\/?$/, '').replace(/\/+$/, '');
+  window.__SJBIS_BASE_PATH__ = basePath;
+  var base = document.createElement('base');
+  base.href = basePath + '/';
+  document.head.appendChild(base);
+  var link = document.createElement('link');
+  link.rel = 'manifest'; link.href = basePath + '/phone.webmanifest';
+  document.head.appendChild(link);
+  var icon = document.createElement('link');
+  icon.rel = 'apple-touch-icon'; icon.href = basePath + '/phone-180.png';
+  document.head.appendChild(icon);
+})();
+</script>
+<link rel="stylesheet" href="phone.css" />
+</head>
+<body>
+<div id="phone"></div>
+<script src="time.js"></script>
+<script src="phone-crypto.js"></script>
+<script src="phone.js"></script>
+</body>
+</html>

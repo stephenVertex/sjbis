@@ -401,6 +401,107 @@ impl Db {
             .collect()
     }
 
+    // ── Phone devices / Web Push (/phone) ───────────────────────────────
+
+    fn push_device_row(r: &sqlx::postgres::PgRow) -> Result<crate::push_handlers::Device> {
+        let endpoint: Option<String> = r.try_get("endpoint")?;
+        let p256dh: Option<String> = r.try_get("p256dh")?;
+        let auth: Option<String> = r.try_get("auth")?;
+        let subscription = match (endpoint, p256dh, auth) {
+            (Some(endpoint), Some(p256dh), Some(auth)) => Some(crate::webpush::Subscription { endpoint, p256dh, auth }),
+            _ => None,
+        };
+        Ok(crate::push_handlers::Device {
+            device_id: r.try_get("device_id")?,
+            subscription,
+            device_name: r.try_get("device_name")?,
+            signer_id: r.try_get("signer_id")?,
+            pubkey: r.try_get("pubkey")?,
+            user_agent: r.try_get("user_agent")?,
+            created_at: r.try_get("created_at")?,
+            updated_at: r.try_get("updated_at")?,
+            last_push_at: r.try_get("last_push_at")?,
+            last_error: r.try_get("last_error")?,
+        })
+    }
+
+    /// Insert or update a phone device. Fields passed as `None` keep their
+    /// stored value, so a page can register its key before it has a push
+    /// subscription and add the subscription later.
+    pub async fn upsert_push_device(
+        &self,
+        device_id: &str,
+        sub: Option<&crate::webpush::Subscription>,
+        device_name: Option<&str>,
+        signer_id: Option<&str>,
+        pubkey: Option<&str>,
+        user_agent: Option<&str>,
+    ) -> Result<crate::push_handlers::Device> {
+        let row = sqlx::query(
+            r#"INSERT INTO push_subscriptions (device_id, endpoint, p256dh, auth, device_name, signer_id, pubkey, user_agent)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               ON CONFLICT (device_id) DO UPDATE SET
+                 endpoint = COALESCE(EXCLUDED.endpoint, push_subscriptions.endpoint),
+                 p256dh = COALESCE(EXCLUDED.p256dh, push_subscriptions.p256dh),
+                 auth = COALESCE(EXCLUDED.auth, push_subscriptions.auth),
+                 device_name = COALESCE(EXCLUDED.device_name, push_subscriptions.device_name),
+                 signer_id = COALESCE(EXCLUDED.signer_id, push_subscriptions.signer_id),
+                 pubkey = COALESCE(EXCLUDED.pubkey, push_subscriptions.pubkey),
+                 user_agent = COALESCE(EXCLUDED.user_agent, push_subscriptions.user_agent),
+                 last_error = CASE WHEN EXCLUDED.endpoint IS NOT NULL THEN NULL ELSE push_subscriptions.last_error END,
+                 updated_at = now()
+               RETURNING *"#,
+        )
+        .bind(device_id)
+        .bind(sub.map(|s| s.endpoint.as_str()))
+        .bind(sub.map(|s| s.p256dh.as_str()))
+        .bind(sub.map(|s| s.auth.as_str()))
+        .bind(device_name)
+        .bind(signer_id)
+        .bind(pubkey)
+        .bind(user_agent)
+        .fetch_one(&self.pool)
+        .await?;
+        Self::push_device_row(&row)
+    }
+
+    pub async fn delete_push_device(&self, device_id: &str) -> Result<bool> {
+        let r = sqlx::query("DELETE FROM push_subscriptions WHERE device_id = $1").bind(device_id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    pub async fn list_push_devices(&self) -> Result<Vec<crate::push_handlers::Device>> {
+        let rows = sqlx::query("SELECT * FROM push_subscriptions ORDER BY created_at").fetch_all(&self.pool).await?;
+        rows.iter().map(Self::push_device_row).collect()
+    }
+
+    pub async fn mark_push_ok(&self, device_id: &str) -> Result<()> {
+        sqlx::query("UPDATE push_subscriptions SET last_push_at = now(), last_error = NULL WHERE device_id = $1")
+            .bind(device_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn mark_push_error(&self, device_id: &str, err: &str) -> Result<()> {
+        sqlx::query("UPDATE push_subscriptions SET last_error = $2 WHERE device_id = $1")
+            .bind(device_id)
+            .bind(err)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Drop a dead subscription but keep the device (and its signing key).
+    pub async fn clear_push_subscription(&self, device_id: &str, why: &str) -> Result<()> {
+        sqlx::query("UPDATE push_subscriptions SET endpoint = NULL, p256dh = NULL, auth = NULL, last_error = $2, updated_at = now() WHERE device_id = $1")
+            .bind(device_id)
+            .bind(why)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     // ── Grants (ta) ─────────────────────────────────────────────────────
 
     async fn insert_grant_row(
