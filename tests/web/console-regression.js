@@ -28,7 +28,7 @@
   ];
   let missed = [];
 
-  const h = { answers: [], approvals: [], snoozes: [], dismisses: [], passes: [], uncaught: [],
+  const h = { answers: [], approvals: [], snoozes: [], dismisses: [], passes: [], uncaught: [], previews: [], previewPolls: 0,
     healthUp: false, approveFail: false, sources: [] };
   window.__consoleRegression = h;
   window.addEventListener('error', (e) => h.uncaught.push(e.error || e.message));
@@ -39,6 +39,10 @@
     const url = String(input && input.url ? input.url : input);
     const method = (init && init.method) || 'GET';
     const body = init && init.body ? JSON.parse(init.body) : null;
+    if (url === 'http://127.0.0.1:7881/messages') {
+      h.previewPolls += 1;
+      return json(h.previews);
+    }
     if (url === `${SIDECAR}/health`) {
       if (!h.healthUp) throw new TypeError('Failed to fetch');
       return json({ ok: true, signer: 'pi-yubikey', daemon: 'http://daemon.test:7878' });
@@ -278,6 +282,29 @@
     key('Y', undefined, { code: 'KeyY', ctrlKey: true, altKey: true, shiftKey: true });
     await waitFor(() => h.answers.some((a) => a.id === milestone.id && a.body.answer === label),
       'the Stream Deck YES shortcut sends the configured acknowledgment');
+
+    if (new URLSearchParams(location.search).get('message-previews') === '1') {
+      const source = h.sources.at(-1);
+      const pending = ask('preview-active-ask', 9, { question: 'Keep this ask selected?', question_type: 'yesno' });
+      source.emit({ event: 'notification_created', notification: pending });
+      await waitFor(() => question() === pending.question, 'test ask is selected before message arrives');
+      const message = '<img src=x onerror="window.__xss = 3">';
+      h.previews.push({ id: 'preview-demo', name: 'Test Sender', text: message });
+      await waitFor(() => text('.preview-text') === message, 'message preview renders');
+      assert($('#c-preview').classList.contains('compact') && question() === pending.question, 'message preview preserves active ask');
+      assert(!$('.preview-text img') && text('.preview-avatar') === 'T', 'message text is literal and missing photos use initials');
+      $('.preview-seen').click();
+      assert($('#c-preview').hidden, 'Seen hides the preview');
+      window.SjbisConsole.state.queue.slice().forEach((item) => source.emit({ event: 'notification_cancelled', id: item.id }));
+      h.previews.push({ id: 'preview-idle', name: 'Test Sender', text: 'See you soon.' });
+      await waitFor(() => text('.preview-text') === 'See you soon.', 'new message displays after an older preview is seen');
+      assert(!$('#c-preview').classList.contains('compact'), 'idle message preview uses the large card');
+      const answerCount = h.answers.length;
+      key('Y', undefined, { code: 'KeyY', ctrlKey: true, altKey: true, shiftKey: true });
+      assert($('#c-preview').hidden && h.answers.length === answerCount, 'idle Stream Deck YES clears the preview without posting an answer');
+    } else {
+      assert(h.previewPolls === 0 && $('#c-preview').hidden, 'default console leaves the preview feed off');
+    }
 
     assert(window.__xss === undefined, 'no injected script ran');
     assert(h.uncaught.length === 0, `no uncaught errors ${h.uncaught.join(';')}`);

@@ -75,6 +75,43 @@ xattr -d com.apple.quarantine /Users/stephen/dev5/sjbis/plugins/imessage/target/
 
 ## Running
 
+### Pi message previews
+
+The `preview` command watches for new incoming plain-text messages from selected
+contacts. It opens the Messages database read-only. **Seen** on the Pi clears the
+popup and leaves the message's read status in Messages alone.
+
+On the Mac, export the selected contacts' handles, first names, and JPEG
+thumbnails into a private local config. The Contacts export may prompt for access.
+
+```bash
+cd plugins/imessage
+umask 077
+preview_dir="$HOME/.config/sjbis/message-preview"
+mkdir -p "$preview_dir"
+swiftc preview-contacts.swift -o "$preview_dir/preview-contacts"
+"$preview_dir/preview-contacts" dashboard-pi.tailb4b58.ts.net "Contact Full Name" \
+  > "$preview_dir/contacts.json"
+cargo build --release --locked
+target/release/sjbis-imessage preview --config "$preview_dir/contacts.json"
+```
+
+Pass an additional full name for each contact to watch. The Mac must be able to
+SSH to the Pi in batch mode and read `~/Library/Messages/chat.db`. The watcher
+starts at the newest row on its first run and saves a cursor alongside the
+config. Keep the config and cursor on the Mac. For an always-on setup, run the
+same command in a per-user LaunchAgent with Full Disk Access.
+
+On the Pi, run `pi-preview.py --origin http://dertog.tailb4b58.ts.net:7878`
+using Python 3, and append `&message-previews=1` to the kiosk launcher URL. The
+Pi's `sjbis-message-preview.service` runs the receiver on `127.0.0.1:7881`. The
+watcher publishes over SSH and the kiosk polls the receiver. The Pi holds
+previews in memory for up to a minute. The normal SJBIS daemon, history, and
+push channels are outside this path. Newly arrived texts appear as a large
+photo card on an idle console or a compact banner while an ask is on screen.
+Use **Seen** or press the Stream Deck **YES** key when idle to clear a preview
+early. Without a photo the card shows an initial.
+
 ### Test Mode (dry run)
 
 See what would be surfaced without posting to SJBIS:

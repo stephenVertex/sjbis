@@ -9,6 +9,7 @@
   var params = new URLSearchParams(window.location.search);
   var SIDECAR = (params.get('sidecar') || 'http://127.0.0.1:7879').replace(/\/+$/, '');
   var PERSONAL_CELEBRATION = params.get('mazel-tov') === '1';
+  var MESSAGE_PREVIEWS = params.get('message-previews') === '1';
   var PRESET_TTLS = [[600, '10m'], [3600, '1h'], [86400, '24h']];
   function fmtTtl(secs) {
     if (secs % 86400 === 0) return (secs / 86400) + 'd';
@@ -43,11 +44,66 @@
   };
   var root = document.getElementById('console');
   if (!root) { root = document.createElement('div'); root.id = 'console'; document.body.appendChild(root); }
-  root.innerHTML = '<div class="hdr" id="c-hdr"></div><div class="card" id="c-card"></div>'
+  root.innerHTML = '<div class="hdr" id="c-hdr"></div>'
+    + '<aside class="message-preview" id="c-preview" aria-live="polite" hidden></aside>'
+    + '<div class="card" id="c-card"></div>'
     + '<div class="noterow" id="c-noterow" hidden><input id="c-note" autocomplete="off" spellcheck="false"></div>'
     + '<div class="row tools" id="c-tools"></div><div id="c-overlay"></div>';
   var $ = function (id) { return document.getElementById(id); };
   var noteEl = $('c-note');
+  var previewPanel = $('c-preview');
+  var preview = null, previewQueue = [], previewTimer;
+  var seenPreviews = new Set();
+
+  function showNextPreview() {
+    preview = previewQueue.shift() || null;
+    previewPanel.hidden = !preview;
+    previewPanel.replaceChildren();
+    if (!preview) return;
+    seenPreviews.add(preview.id);
+    previewPanel.innerHTML = '<div class="preview-avatar" aria-hidden="true"></div>'
+      + '<div class="preview-content"><div class="preview-name"></div><p class="preview-text"></p></div>'
+      + '<button type="button" class="preview-seen">Seen</button>';
+    var avatar = previewPanel.querySelector('.preview-avatar');
+    avatar.textContent = Array.from(preview.name.trim())[0].toUpperCase();
+    if (preview.photo) {
+      var image = document.createElement('img');
+      image.alt = '';
+      image.src = 'data:image/jpeg;base64,' + preview.photo;
+      image.addEventListener('error', function () { image.remove(); });
+      avatar.appendChild(image);
+    }
+    previewPanel.querySelector('.preview-name').textContent = preview.name;
+    previewPanel.querySelector('.preview-text').textContent = preview.text;
+    previewPanel.querySelector('button').addEventListener('click', dismissPreview);
+    updatePreviewLayout();
+    previewTimer = setTimeout(dismissPreview, 20 * 1000);
+  }
+  function dismissPreview() {
+    clearTimeout(previewTimer);
+    showNextPreview();
+  }
+  function updatePreviewLayout() {
+    previewPanel.classList.toggle('compact', Boolean(current() || S.showMissed || S.grant));
+  }
+  async function pollPreviews() {
+    try {
+      var response = await fetch('http://127.0.0.1:7881/messages', {
+        cache: 'no-store', signal: AbortSignal.timeout(4000),
+      });
+      if (!response.ok) throw new Error('Message preview feed unavailable');
+      var messages = await response.json();
+      var ids = new Set(messages.map(function (message) { return message.id; }));
+      seenPreviews.forEach(function (id) { if (!ids.has(id)) seenPreviews.delete(id); });
+      previewQueue = messages.filter(function (message) {
+        return !seenPreviews.has(message.id) && (!preview || message.id !== preview.id);
+      });
+      if (!preview) showNextPreview();
+    } catch (_) {
+      previewQueue = [];
+    }
+    setTimeout(pollPreviews, 1500);
+  }
 
   // ── helpers ────────────────────────────────────────────────────────────
   function esc(s) {
@@ -469,6 +525,7 @@
   }
   function render() {
     var n = current();
+    updatePreviewLayout();
     renderHeader(n);
     if (S.showMissed) {
       var card = $('c-card'), oldList = $('c-missed'), scroll = oldList ? oldList.scrollTop : 0;
@@ -562,6 +619,7 @@
     }
     if (/^[1-9]$/.test(key)) { e.preventDefault(); act('pick', Number(key) - 1); return; }
     if (isNumeric(unit(current())) && /^[+=\-_]$/.test(key)) { e.preventDefault(); act(key === '+' || key === '=' ? 'yes' : 'no'); return; }
+    if (key === 'y' && preview && !current()) { e.preventDefault(); dismissPreview(); return; }
     if (KEYS[key]) { e.preventDefault(); act(KEYS[key]); }
   });
   root.addEventListener('click', function (e) {
@@ -582,4 +640,5 @@
   setInterval(tick, 1000);
   setInterval(load, 60000); // snoozed asks reappear once their snooze lapses
   load().then(connect);
+  if (MESSAGE_PREVIEWS) pollPreviews();
 }());

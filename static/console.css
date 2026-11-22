@@ -16,6 +16,26 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
   border-radius: 50%; background: currentColor; vertical-align: middle; }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
 .card { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1.4vh; }
+.message-preview[hidden] { display: none; }
+.message-preview { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(77vw, 125vh); display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center; gap: 3.5vh; padding: 4vh; border: 0.2vh solid #638dcc; border-radius: 3vh;
+  background: linear-gradient(125deg, #233650, #141e2e 73%); box-shadow: 0 2vh 9vh #000b; }
+#console:has(.message-preview:not([hidden]):not(.compact)) .empty { visibility: hidden; }
+.preview-avatar { position: relative; display: grid; place-items: center; flex: none;
+  width: 18vh; aspect-ratio: 1; overflow: hidden; border-radius: 50%;
+  background: #344e71; color: #e3efff; font-size: 8vh; font-weight: 700; }
+.preview-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.preview-name { margin-bottom: 1vh; color: #accafa; font-size: 3.3vh; font-weight: 700; }
+.preview-text { margin: 0; color: #f5f7fc; font-size: 4.3vh; line-height: 1.23; white-space: pre-line;
+  overflow-wrap: anywhere; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.message-preview .preview-seen { min-width: auto; min-height: auto; padding: 1.1vh 1.8vh; border-radius: 1.15vh;
+  border-color: #638dcc; background: #253b59; color: #f5f7fc; font-size: 2.6vh; }
+.message-preview.compact { position: static; transform: none; width: min(59vw, 106vh); align-self: end; flex: none;
+  gap: 1.4vh; padding: 1vh 1.5vh; border-radius: 1.6vh; box-shadow: none; }
+.compact .preview-avatar { width: 6.5vh; font-size: 3.3vh; }
+.compact .preview-name { margin-bottom: 0.25vh; font-size: 2.35vh; }
+.compact .preview-text { font-size: 2.7vh; -webkit-line-clamp: 2; }
 .meta { font-size: 3vh; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .meta b { color: var(--fg); }
 .meta .milestone { color: #ffd68c; font-weight: 700; }
