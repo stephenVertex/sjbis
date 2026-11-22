@@ -44,6 +44,31 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .firework-trail::after { top: calc(var(--tip) - 2.8%); width: 1.8%; aspect-ratio: 1; border-radius: 50%;
   background: var(--color); box-shadow: 0 0 0.75vh var(--color); }
 .firework-trail:nth-child(3n)::after { background: #fff4df; }
+.mazel-tov-art { display: grid; place-items: center; border-color: #a18757;
+  background: radial-gradient(ellipse at 50% 36%, #234873, transparent 68%), linear-gradient(143deg, #0c152d, #12284d 55%, #0d1833); }
+.mazel-tov-art::before { content: ""; position: absolute; inset: 1.2vh; border: 0.14vh solid #b4976280;
+  border-radius: 1.2vh; pointer-events: none; }
+.mazel-tov-lockup { position: relative; display: grid; justify-items: center; gap: 1.6vh; max-width: 72%; }
+.mazel-tov-title { color: #fff1c7; font: 700 min(14vh, 13vw)/1 Georgia, "Liberation Serif", serif;
+  text-align: center; text-shadow: 0 0.3vh 1.5vh #050b20a0; }
+.mazel-tov-gables { display: flex; align-items: end; gap: 0.55vh; width: min(38vh, 39vw); height: 13vh; color: #e5be78; }
+.mazel-tov-gables span { --gable: polygon(0 100%, 0 52%, 11% 52%, 11% 38%, 23% 38%, 23% 24%, 35% 24%, 35% 12%,
+    50% 0, 65% 12%, 65% 24%, 77% 24%, 77% 38%, 89% 38%, 89% 52%, 100% 52%, 100% 100%);
+  position: relative; flex: 1; height: 80%; background: currentColor; clip-path: var(--gable); }
+.mazel-tov-gables span:nth-child(2) { height: 100%; }
+.mazel-tov-gables span::before { content: ""; position: absolute; inset: 0.35vh; clip-path: var(--gable); background: #19365a; }
+.mazel-tov-gables span::after { content: ""; position: absolute; left: 38%; bottom: 15%; width: 24%; height: 33%;
+  border: 0.15vh solid currentColor; border-radius: 45% 45% 0 0; background: #0d1e3d; }
+.mazel-tov-emblem { position: absolute; width: min(11vh, 10vw); aspect-ratio: 1; top: 50%; color: #e5be78; transform: translateY(-50%); }
+.mazel-tov-emblem.left { left: 12%; }
+.mazel-tov-emblem.right { right: 12%; }
+.mazel-tov-emblem::before, .mazel-tov-emblem::after { content: ""; position: absolute; inset: 0;
+  background: currentColor; clip-path: polygon(evenodd, 50% 4%, 98% 88%, 2% 88%, 50% 4%, 50% 15%, 11% 83%, 89% 83%, 50% 15%); }
+.mazel-tov-emblem::after { transform: rotate(180deg); }
+.mazel-tov-art.compact .mazel-tov-lockup { gap: 0.8vh; }
+.mazel-tov-art.compact .mazel-tov-gables { width: min(21vh, 24vw); height: 7vh; }
+.mazel-tov-art.compact .mazel-tov-title { font-size: min(7.6vh, 13vw); }
+.mazel-tov-art.compact .mazel-tov-emblem { width: min(8vh, 9vw); }
 .detail { flex: 1; min-height: 8vh; overflow: auto; padding: 1.2vh 2vw; font-size: 3.2vh; line-height: 1.35;
   background: var(--panel); border: 0.25vh solid var(--line); border-radius: 1vh; }
 .detail.plain { white-space: pre-wrap; }
@@ -69,7 +94,7 @@ button kbd { white-space: nowrap; font-family: var(--mono); font-size: 2.8vh; pa
   border-radius: 0.6vh; opacity: 0.85; }
 button.yes { border-color: var(--ok); } button.no { border-color: var(--bad); }
 button.celebrate-action { color: #ffe5ad; border-color: #ffd277; background: linear-gradient(100deg, #332046, #3e2731 55%, #492d18); }
-button.mazel-tov-action { color: #f0dfff; border-color: #c7a5ff; background: #281e38; }
+button.mazel-tov-action { color: #fff1c7; border-color: #d5b473; background: linear-gradient(100deg, #16254b, #203c67); }
 button.sel { background: var(--ok); color: #000; border-color: var(--ok); }
 button.arm { background: var(--warn); color: #000; border-color: var(--warn); }
 button:disabled { opacity: 0.35; cursor: default; }

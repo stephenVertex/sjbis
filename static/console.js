@@ -131,7 +131,7 @@
   function formSub(n) { return isForm(n) ? n.sub_questions[Math.min(S.formIdx || 0, n.sub_questions.length - 1)] : null; }
   function unit(n) {
     if (n && n.question_type === 'celebrate') {
-      return Object.assign({}, n, { question_type: 'ack', ack_label: n.ack_label || 'Celebrate' });
+      return Object.assign({}, n, { question_type: 'ack', ack_label: PERSONAL_CELEBRATION ? 'Mazel tov' : n.ack_label || 'Celebrate' });
     }
     var sq = formSub(n);
     if (!sq) return n;
@@ -283,7 +283,6 @@
     }));
   }
   function closeGrant() { clearTimeout(S.grantTimer); S.grant = null; render(); }
-  function canMazelTov(n) { return PERSONAL_CELEBRATION && n && n.question_type === 'celebrate'; }
   function removeMissed(id) {
     ++loadGeneration;
     S.missed = S.missed.filter(function (n) { return n.id !== id; });
@@ -305,10 +304,6 @@
     if (name === 'next') return step(1);
     if (name === 'reload') { setMsg(''); checkSidecar(); if (!es) connect(); return load(); }
     if (!n || S.busy) return;
-    if (name === 'mazel-tov') {
-      if (canMazelTov(n)) return answer(n, 'Mazel tov');
-      return;
-    }
     var u = unit(n), t = u.question_type, opts = options(u);
     if (name === 'note') { noteEl.focus(); return; }
     if (name === 'back') { if (isForm(n) && S.formIdx > 0) formGoto(n, S.formIdx - 1); return; }
@@ -386,6 +381,15 @@
       + '<span class="sp"></span>' + side + conn + '<span id="c-clock">' + esc(clock()) + '</span>';
   }
   function milestoneArtwork(hasDetail) {
+    var layout = 'celebration-art' + (hasDetail ? ' compact' : '');
+    if (PERSONAL_CELEBRATION) {
+      return '<div class="' + layout + ' mazel-tov-art">'
+        + '<div class="mazel-tov-emblem left" aria-hidden="true"></div>'
+        + '<div class="mazel-tov-lockup">'
+        + '<div class="mazel-tov-gables" aria-hidden="true"><span></span><span></span><span></span></div>'
+        + '<div class="mazel-tov-title">Mazel tov</div></div>'
+        + '<div class="mazel-tov-emblem right" aria-hidden="true"></div></div>';
+    }
     var bursts = FIREWORKS.map(function (burst, index) {
       var trails = [];
       for (var i = 0; i < burst.rays; i++) {
@@ -397,7 +401,7 @@
       return '<span class="firework" style="--x:' + burst.x + '%;--y:' + burst.y + '%;--size:' + burst.scale
         + ';--color:' + burst.color + '">' + trails.join('') + '</span>';
     }).join('');
-    return '<div class="celebration-art' + (hasDetail ? ' compact' : '') + '" aria-hidden="true">' + bursts + '</div>';
+    return '<div class="' + layout + '" aria-hidden="true">' + bursts + '</div>';
   }
   function renderCard(n) {
     var card = $('c-card');
@@ -442,8 +446,8 @@
       row.push(btn('yes', 'Y', t === 'diff' ? 'Approve' : u.yes_label || 'Yes', 'yes', S.busy));
       row.push(btn('no', 'N', t === 'diff' ? 'Reject' : u.no_label || 'No', 'no', S.busy));
     } else if (t === 'ack') {
-      row.push(btn('yes', 'Y', u.ack_label || 'Acknowledged', celebrates ? 'celebrate-action' : 'yes', S.busy));
-      if (canMazelTov(n)) row.push(btn('mazel-tov', 'V', 'Mazel tov', 'mazel-tov-action', S.busy));
+      var ackStyle = celebrates ? (PERSONAL_CELEBRATION ? 'mazel-tov-action' : 'celebrate-action') : 'yes';
+      row.push(btn('yes', 'Y', u.ack_label || 'Acknowledged', ackStyle, S.busy));
     } else if (t === 'numeric') {
       h.push('<div class="num" id="c-num">' + esc(numFmt(S.num)) + (u.unit ? ' <span class="unit">' + esc(u.unit) + '</span>' : '')
         + '<span class="range">' + esc(numRange(u)) + ' · step ' + esc(numFmt(numStep(u))) + '</span></div>');
@@ -541,7 +545,6 @@
       return;
     }
     if (key === 'h' && S.missed.length) { e.preventDefault(); act('missed'); return; }
-    if (key === 'v' && canMazelTov(current())) { e.preventDefault(); act('mazel-tov'); return; }
     if (key === 'pagedown' || key === 'pageup' || key === 'arrowdown' || key === 'arrowup') {
       // Scroll whichever pane still has somewhere to go in that direction: a long
       // question first (it sits above the detail), then the detail pane.

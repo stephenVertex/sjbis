@@ -71,7 +71,7 @@
 
   const $ = (sel) => document.querySelector(sel);
   const text = (sel) => ($(sel) ? $(sel).textContent : '');
-  const key = (k, target) => (target || document).dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+  const key = (k, target, modifiers = {}) => (target || document).dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...modifiers }));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const button = (act) => $(`button[data-act="${act}"]`);
   function record(message, cls) {
@@ -257,28 +257,27 @@
     assert(text('#c-missed').includes('No missed asks.'), 'dismissed item stays hidden after reload');
     key('Escape');
     assert(question() === 'Ship the release?', 'returning from missed preserves the open queue');
-    const previousAnswerCount = h.answers.length;
-    key('v');
-    assert(!button('mazel-tov') && h.answers.length === previousAnswerCount, 'the personal action is confined to milestones');
+    assert(!$('#c-card .mazel-tov-title') && text('button[data-act="yes"]').includes('Ship it'),
+      'personal settings leave standard asks alone');
 
     const milestone = ask('c-celebrate', 9, { question: 'v2.4 shipped', question_type: 'celebrate' });
     h.sources.at(-1).emit({ event: 'notification_created', notification: milestone });
     key('k');
     assert(question() === milestone.question && text('#c-card .milestone') === 'Milestone', 'milestone is marked in the console');
     const celebration = $('#c-card .celebration-art');
-    assert(celebration && celebration.getBoundingClientRect().height > 100 && celebration.querySelectorAll('.firework').length === 5,
-      'milestone fills the card with five font-independent fireworks');
-    assert(text('button[data-act="yes"]').includes('Celebrate'), 'milestone has a Celebrate action');
     const personal = new URLSearchParams(window.location.search).get('mazel-tov') === '1';
-    assert(Boolean(button('mazel-tov')) === personal, 'the personal action requires kiosk opt-in');
-    if (!personal) {
-      key('v');
-      window.SjbisConsole.act('mazel-tov');
-      assert(h.answers.length === previousAnswerCount, 'the personal action is blocked on a default console');
-    }
-    key(personal ? 'v' : 'y');
-    await waitFor(() => h.answers.some((a) => a.id === milestone.id && a.body.answer === (personal ? 'Mazel tov' : 'Celebrate')),
-      'the selected celebration posts an acknowledgment');
+    const label = personal ? 'Mazel tov' : 'Celebrate';
+    assert(celebration && celebration.getBoundingClientRect().height > 100, 'the milestone artwork fills the card');
+    assert(personal ? text('.mazel-tov-title') === 'Mazel tov' && celebration.querySelectorAll('.mazel-tov-gables span').length === 3
+      : !$('.mazel-tov-title') && celebration.querySelectorAll('.firework').length === 5, 'the kiosk config selects the milestone artwork');
+    assert(text('button[data-act="yes"] .lbl') === label && text('button[data-act="yes"] kbd') === 'Y'
+      && !button('mazel-tov'), 'the milestone has one primary action on Y');
+    const previousAnswerCount = h.answers.length;
+    key('v');
+    assert(h.answers.length === previousAnswerCount, 'the old V shortcut leaves the milestone open');
+    key('Y', undefined, { code: 'KeyY', ctrlKey: true, altKey: true, shiftKey: true });
+    await waitFor(() => h.answers.some((a) => a.id === milestone.id && a.body.answer === label),
+      'the Stream Deck YES shortcut sends the configured acknowledgment');
 
     assert(window.__xss === undefined, 'no injected script ran');
     assert(h.uncaught.length === 0, `no uncaught errors ${h.uncaught.join(';')}`);

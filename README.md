@@ -309,10 +309,10 @@ driving a 1920×1080 display. On that host, `~/.config/labwc/autostart` launches
 The systemd user service `streamdeck-keys.service` maps Stream Deck buttons
 to console shortcuts, and `ta-console.service` runs the local signer.
 
-For the personal **Mazel tov** action, append `&mazel-tov=1` to the URL in
-the local `kiosk.sh` launcher and restart Chromium. This adds a second
-milestone button and shortcut `V` for that kiosk. Remove the parameter to
-turn the option off.
+For the personal **Mazel tov** banner, append `&mazel-tov=1` to the URL in
+the local `kiosk.sh` launcher and restart Chromium. Milestone cards use the
+Mazel tov artwork and button with the same `Y` shortcut and Stream Deck
+**YES** key. Remove the parameter to restore the fireworks and Celebrate.
 
 | Key | Action |
 |---|---|
@@ -363,11 +363,12 @@ sjbis ask --daemon http://dertog.tailb4b58.ts.net:7878 --celebrate \
   --urgency 1 --deadline 5m --json
 ```
 
-The console shows a gold **Milestone** label, a fireworks panel, and a
-**Celebrate** button. If another ask is already selected, use `J` or `K` to find
-the test card. Press `Y` or click **Celebrate**. The card clears, and
-`GET /notification/{id}` reports `status: "answered"`, `answer: "Celebrate"`,
-and `answer_label: "console"` for the ID returned by the CLI.
+The console shows a gold **Milestone** label and the configured artwork.
+If another ask is already selected, use `J` or `K` to find the test card.
+Press `Y`, press **YES** on the Stream Deck, or click the primary button.
+The card clears, and `GET /notification/{id}` reports `status: "answered"`,
+`answer: "Celebrate"` or `answer: "Mazel tov"`, and `answer_label: "console"`
+for the ID returned by the CLI.
 
 Browser regression: serve the repository root over HTTP
 (`python3 -m http.server 8000`) and open
