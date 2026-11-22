@@ -77,6 +77,9 @@
   function isForm(n) { return !!(n && n.question_type === 'form' && Array.isArray(n.sub_questions) && n.sub_questions.length); }
   function formSub(n) { return isForm(n) ? n.sub_questions[Math.min(S.formIdx || 0, n.sub_questions.length - 1)] : null; }
   function unit(n) {
+    if (n && n.question_type === 'celebrate') {
+      return Object.assign({}, n, { question_type: 'ack', ack_label: n.ack_label || 'Celebrate' });
+    }
     var sq = formSub(n);
     if (!sq) return n;
     return { question_type: FORM_SHAPES[sq.shape] || 'unsupported', question: sq.question, choices: sq.choices, min: sq.min, max: sq.max,
@@ -501,10 +504,10 @@
     } else {
       h.push('<div class="section">' + S.queue.length + ' open</div>');
       S.queue.forEach(function (n) {
-        var appr = isApproval(n);
-        h.push('<button type="button" class="card u' + esc(n.urgency) + (appr ? ' appr' : '') + '" data-open="' + esc(n.id) + '">'
+        var appr = isApproval(n), celebrates = n.question_type === 'celebrate';
+        h.push('<button type="button" class="card u' + esc(n.urgency) + (appr ? ' appr' : celebrates ? ' milestone' : '') + '" data-open="' + esc(n.id) + '">'
           + '<div class="meta"><b>' + esc(n.agent_name) + '</b><span class="sp"></span>'
-          + '<span class="chip' + (appr ? ' appr' : '') + '">' + esc(appr ? 'approval' : n.question_type) + '</span>'
+          + '<span class="chip' + (appr ? ' appr' : celebrates ? ' milestone' : '') + '">' + esc(celebrates ? '🎉 Milestone' : n.question_type) + '</span>'
           + (n.urgency >= 4 ? '<span class="chip" style="background:var(--bad);color:#000">U' + esc(n.urgency) + '</span>' : '')
           + '<span class="age" data-ts="' + esc(n.created_at) + '">' + esc(fmtAge(n.created_at, Date.now())) + '</span></div>'
           + '<div class="q">' + esc(n.question) + '</div></button>');
@@ -529,7 +532,8 @@
     h.push('<div class="top"><button type="button" class="iconbtn" data-nav="list" aria-label="back">‹</button>'
       + '<span class="title">' + esc(n.agent_name) + '</span><span class="sp"></span><span class="pill">' + (idx + 1) + ' of ' + S.queue.length + '</span></div>');
     h.push('<div class="ask"><div class="body">');
-    h.push('<div class="meta row1"><span>' + esc(n.src) + '</span><span class="urg' + (n.urgency >= 4 ? ' hot' : '') + '">U' + esc(n.urgency) + '</span>'
+    h.push('<div class="meta row1">' + (n.question_type === 'celebrate' ? '<span class="milestone">🎉 Milestone</span>' : '')
+      + '<span>' + esc(n.src) + '</span><span class="urg' + (n.urgency >= 4 ? ' hot' : '') + '">U' + esc(n.urgency) + '</span>'
       + '<span class="age" data-ts="' + esc(n.created_at) + '">' + esc(fmtAge(n.created_at, Date.now())) + '</span>'
       + (n.deadline ? '<span class="warn">deadline ' + esc(fmtAge(Date.now(), Date.parse(n.deadline), '')) + '</span>' : '') + '</div>');
     h.push('<h1 class="q' + (n.question.length > 300 ? ' xlong' : n.question.length > 110 ? ' long' : '') + '" id="p-q">' + esc(n.question) + '</h1>');

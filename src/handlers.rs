@@ -148,9 +148,9 @@ pub async fn ask(
             let open = state.db.list_notifications(false).await.unwrap_or_default();
             let result = router.classify(&req.question, &req.agent_name, req.urgency, &open).await;
             if let Some(ref suggested) = result.renderer_suggested {
-                // The AI router may never lock a card: approval is opt-in only.
+                // Approvals and milestone alerts are explicitly requested by the caller.
                 match suggested.parse::<QuestionType>() {
-                    Ok(QuestionType::Approval) | Err(_) => {}
+                    Ok(QuestionType::Approval | QuestionType::Celebrate) | Err(_) => {}
                     Ok(parsed) => {
                         question_type = parsed;
                         _renderer_guessed = result.renderer_guessed;
@@ -972,11 +972,7 @@ async fn send_push_notifications(state: &AppState, notif: &Notification) {
         }
     };
 
-    let title = if notif.urgency >= 4 {
-        format!("🚨 {}", notif.agent_name)
-    } else {
-        notif.agent_name.clone()
-    };
+    let title = crate::push_handlers::ask_push_title(notif);
     let mut chars = notif.question.chars();
     let mut body: String = chars.by_ref().take(100).collect();
     if chars.next().is_some() {

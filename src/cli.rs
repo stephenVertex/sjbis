@@ -293,6 +293,12 @@ pub struct AskArgs {
     /// Answer shape: acknowledge only
     #[arg(long)]
     pub ack: bool,
+    /// Post a milestone with a celebratory alert and one-tap acknowledgment
+    #[arg(
+        long,
+        conflicts_with_all = ["yesno", "choices", "text", "number", "file", "diff", "ack", "pick", "schedule", "form", "approval", "guess_renderer"]
+    )]
+    pub celebrate: bool,
     /// Answer shape: pick from a list
     #[arg(long)]
     pub pick: Option<String>,
@@ -388,6 +394,7 @@ impl AskArgs {
     pub fn question_type(&self) -> Option<crate::models::QuestionType> {
         use crate::models::QuestionType;
         if self.approval { return Some(QuestionType::Approval); }
+        if self.celebrate { return Some(QuestionType::Celebrate); }
         if self.form.is_some() { return Some(QuestionType::Form); }
         if self.yesno { return Some(QuestionType::YesNo); }
         if self.choices.is_some() { return Some(QuestionType::Multichoice); }
@@ -522,6 +529,17 @@ mod tests {
             Commands::Ask(args) => args,
             _ => panic!("expected ask command"),
         })
+    }
+
+    #[test]
+    fn ask_celebrate_posts_a_nonblocking_milestone() {
+        use crate::models::QuestionType;
+        let args = parse_ask(&["--celebrate"]).unwrap();
+        assert_eq!(args.question_type(), Some(QuestionType::Celebrate));
+        assert!(!args.effective_blocking());
+        assert!(args.urgency >= 2);
+        assert!(parse_ask(&["--celebrate", "--ack"]).is_err());
+        assert!(parse_ask(&["--celebrate", "--approval"]).is_err());
     }
 
     #[test]

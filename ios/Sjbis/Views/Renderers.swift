@@ -134,7 +134,41 @@ struct AckRenderer: View {
     let onAnswer: (String) -> Void
 
     var body: some View {
-        AnswerButton(label: notif.ack_label ?? "Acknowledge", action: { onAnswer("ack") }, prominent: true)
+        let celebrates = notif.question_type == .celebrate
+        let label = notif.ack_label ?? (celebrates ? "Celebrate" : "Acknowledge")
+        AnswerButton(label: label, action: { onAnswer(celebrates ? label : "ack") }, prominent: true)
+    }
+}
+
+struct CelebrationArtwork: View {
+    private let colors: [Color] = [.yellow, .pink, .mint, .purple, .orange]
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [.purple.opacity(0.26), .pink.opacity(0.12), .orange.opacity(0.17)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Canvas { context, size in
+                for index in 0..<32 {
+                    let outer = index >= 16
+                    let angle = CGFloat(index % 16) * .pi / 8 + (outer ? 0.14 : 0)
+                    let x = size.width * (0.5 + cos(angle) * (outer ? 0.43 : 0.29))
+                    let y = size.height * (0.5 + sin(angle) * (outer ? 0.40 : 0.27))
+                    let width = CGFloat(4 + (index % 3))
+                    let height = width + CGFloat(index % 4)
+                    let piece = Path(roundedRect: CGRect(x: -width / 2, y: -height / 2, width: width, height: height), cornerRadius: 1.5)
+                    let position = CGAffineTransform(rotationAngle: angle + .pi / 4)
+                        .concatenating(CGAffineTransform(translationX: x, y: y))
+                    context.fill(piece.applying(position), with: .color(colors[index % colors.count].opacity(0.85)))
+                }
+            }
+            Text("🎉").font(.system(size: 64))
+        }
+        .frame(height: 144)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .accessibilityHidden(true)
     }
 }
 

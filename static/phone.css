@@ -34,6 +34,7 @@ code { font-family: var(--mono); background: #000; border-radius: 4px; padding: 
 .card::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 5px; border-radius: 0 4px 4px 0; background: var(--line); }
 .card.u3::before { background: var(--info); } .card.u4::before, .card.u5::before { background: var(--bad); }
 .card.appr::before { background: var(--ok); }
+.card.milestone::before { background: linear-gradient(#d6a8ff, #ffd68c); }
 .card:active { background: var(--panel2); }
 .card .meta { display: flex; gap: 8px; align-items: baseline; font-size: 13px; color: var(--dim); margin-bottom: 4px; white-space: nowrap; overflow: hidden; }
 .card .meta b { color: var(--fg); overflow: hidden; text-overflow: ellipsis; }
@@ -42,6 +43,7 @@ code { font-family: var(--mono); background: #000; border-radius: 4px; padding: 
 .card .chip { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; padding: 1px 7px;
   border-radius: 999px; background: var(--panel2); color: var(--dim); }
 .card .chip.appr { background: var(--ok); color: #000; }
+.card .chip.milestone, .meta .milestone { color: #ffd68c; }
 .empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px 20px; color: var(--dim); text-align: center; }
 .empty .big { font-size: 56px; line-height: 1; }
 .section { margin: 14px 2px 4px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }

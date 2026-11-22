@@ -278,6 +278,16 @@
     await P().load();
     assert(!$('.card.missed'), 'dismissed item stays hidden after reload');
 
+    const milestone = ask('p-celebrate', 9, { question: 'v2.4 shipped', question_type: 'celebrate' });
+    h.sources[0].emit({ event: 'notification_created', notification: milestone });
+    const milestoneCard = $('[data-open="p-celebrate"]');
+    assert(milestoneCard.classList.contains('milestone') && milestoneCard.textContent.includes('🎉 Milestone'), 'milestone is marked in the phone queue');
+    click(milestoneCard);
+    await waitFor(() => text('#p-q') === milestone.question, 'milestone opens');
+    assert(button('yes').textContent === 'Celebrate', 'milestone has a Celebrate action');
+    click(button('yes'));
+    await waitFor(() => h.answers.some((a) => a.id === milestone.id && a.body.answer === 'Celebrate'), 'celebrate posts an acknowledgment');
+
     // opening an id that is already answered (push tap on an old banner)
     await P().open('p-gone');
     await waitFor(() => S().closed && S().closed.id === 'p-gone', 'unknown id fetched and reported');

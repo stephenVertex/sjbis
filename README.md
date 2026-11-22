@@ -40,7 +40,7 @@ chosen channel — stdout, exit code, webhook, or a file — or a timeout, or a
 Three things define every call:
 
 - **The question** — required free text. The human (and optionally the AI router) reads it.
-- **The answer shape** — one of `--yesno`, `--choices`, `--text`, `--number`, `--file`, `--diff`, `--ack`, `--pick`, `--schedule`, `--approval`. This picks the dashboard renderer. Skip it and pass `--guess-renderer` to let the AI choose.
+- **The answer shape** — one of `--yesno`, `--choices`, `--text`, `--number`, `--file`, `--diff`, `--ack`, `--celebrate`, `--pick`, `--schedule`, `--approval`. This picks the dashboard renderer. Skip it and pass `--guess-renderer` to let the AI choose.
 - **The agent name** — `--agent-name "OpenCode"`, required. Stable across runs of the same caller; drives the card's source line, its glyph/color identity, and rule-matching. Optional `--instance` appends per-session detail (e.g. `"Session s7b3d11"`).
 
 Plus a **reply channel** (`--reply-to`, default `stdout` when `--blocking`) and an
@@ -89,6 +89,10 @@ open http://your-daemon-host:7878
 # 4. Post a question from any agent (goes to the daemon)
 sjbis ask --question "Deploy to prod?" --yesno \
   --agent-name deploybot --blocking
+
+# Announce a milestone and return immediately
+sjbis ask --celebrate --agent-name deploybot --question "v2.4 shipped" \
+  --detail "Production is healthy and all smoke tests passed."
 ```
 
 > If you haven't stood up a daemon yet, see [Server Deployment](#server-deployment).
@@ -1023,6 +1027,7 @@ cargo run -- send ...     # send reply back
 | File upload | `--file` | Drag & drop |
 | Diff approval | `--diff` | Approve / Reject |
 | Acknowledge | `--ack` | Any key to dismiss |
+| Milestone | `--celebrate` | Celebratory push and a one-tap Celebrate action |
 | Pick list | `--pick items.json` | 1–9 keys |
 | Schedule | `--schedule slots.json` | 1–9 keys |
 

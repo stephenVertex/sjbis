@@ -21,6 +21,8 @@ pub enum QuestionType {
     Diff,
     #[serde(rename = "ack")]
     Ack,
+    #[serde(rename = "celebrate")]
+    Celebrate,
     #[serde(rename = "picklist")]
     PickList,
     #[serde(rename = "schedule")]
@@ -43,6 +45,7 @@ impl std::fmt::Display for QuestionType {
             QuestionType::File => "file",
             QuestionType::Diff => "diff",
             QuestionType::Ack => "ack",
+            QuestionType::Celebrate => "celebrate",
             QuestionType::PickList => "picklist",
             QuestionType::Schedule => "schedule",
             QuestionType::Form => "form",
@@ -63,6 +66,7 @@ impl std::str::FromStr for QuestionType {
             "file" => Ok(QuestionType::File),
             "diff" => Ok(QuestionType::Diff),
             "ack" => Ok(QuestionType::Ack),
+            "celebrate" => Ok(QuestionType::Celebrate),
             "picklist" => Ok(QuestionType::PickList),
             "schedule" => Ok(QuestionType::Schedule),
             "form" => Ok(QuestionType::Form),

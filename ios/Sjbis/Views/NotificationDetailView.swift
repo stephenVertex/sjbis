@@ -18,6 +18,9 @@ struct NotificationDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                if notif.question_type == .celebrate {
+                    CelebrationArtwork()
+                }
                 header
                 if let md = notif.detail_markdown {
                     if let attr = try? AttributedString(markdown: md) {
@@ -135,7 +138,7 @@ struct NotificationDetailView: View {
             FreeTextRenderer(notif: notif, onAnswer: doAnswer)
         case .numeric:
             NumericRenderer(notif: notif, onAnswer: doAnswer)
-        case .ack:
+        case .ack, .celebrate:
             AckRenderer(notif: notif, onAnswer: doAnswer)
         case .diff:
             DiffRenderer(notif: notif, onAnswer: doAnswer)

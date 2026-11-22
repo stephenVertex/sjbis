@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NotificationListView: View {
     @EnvironmentObject var store: SjbisStore
+    @State private var expandedIDs: Set<String> = []
 
     var body: some View {
         ScrollView {
@@ -10,8 +11,13 @@ struct NotificationListView: View {
                     EmptyStateView(error: store.connectionError)
                 }
                 ForEach(store.notifications) { notif in
-                    NavigationLink(value: notif) {
-                        NotificationRowView(notif: notif)
+                    FoldableNotificationCard(isExpanded: expanded(notif.id)) { isExpanded in
+                        NavigationLink(value: notif) {
+                            NotificationRowView(notif: notif, isExpanded: isExpanded)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 if !store.missed.isEmpty {
@@ -19,21 +25,23 @@ struct NotificationListView: View {
                         .font(.headline)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(store.missed) { notif in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(notif.agent_name).font(.caption).foregroundStyle(.secondary)
-                            Text(notif.question)
-                            if let expired = notif.timed_out_at {
-                                Text("Expired \(expired.formatted(date: .abbreviated, time: .shortened))")
+                        FoldableNotificationCard(isExpanded: expanded(notif.id)) { isExpanded in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(notif.question_type == .celebrate ? "🎉 \(notif.agent_name)" : notif.agent_name)
                                     .font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                Text("Expiry time unavailable").font(.caption).foregroundStyle(.secondary)
+                                Text(notif.question)
+                                    .lineLimit(isExpanded ? nil : 2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let expired = notif.timed_out_at {
+                                    Text("Expired \(expired.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    Text("Expiry time unavailable").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Button("Dismiss") { Task { await store.dismiss(notif.id) } }
+                                    .buttonStyle(.bordered)
                             }
-                            Button("Dismiss") { Task { await store.dismiss(notif.id) } }
-                                .buttonStyle(.bordered)
                         }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                     }
                 }
             }
@@ -43,6 +51,47 @@ struct NotificationListView: View {
         .navigationDestination(for: SjbisNotification.self) { notif in
             NotificationDetailView(notif: notif)
         }
+    }
+
+    private func expanded(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { expandedIDs.contains(id) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedIDs.insert(id)
+                } else {
+                    expandedIDs.remove(id)
+                }
+            }
+        )
+    }
+}
+
+private struct FoldableNotificationCard<Content: View>: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding var isExpanded: Bool
+    @ViewBuilder var content: (Bool) -> Content
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 4) {
+            content(isExpanded)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Fold summary" : "Expand summary")
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -74,16 +123,28 @@ struct EmptyStateView: View {
     }
 }
 
-struct NotificationRowView: View {
+private struct NotificationRowView: View {
     let notif: SjbisNotification
+    let isExpanded: Bool
+
+    private var isCelebration: Bool { notif.question_type == .celebrate }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            AgentBadge(agentName: notif.agent_name, urgency: notif.urgency)
+            if isCelebration {
+                Text("🎉")
+                    .font(.title2)
+                    .frame(width: 36, height: 36)
+                    .background(.purple.opacity(0.22), in: Circle())
+                    .accessibilityHidden(true)
+            } else {
+                AgentBadge(agentName: notif.agent_name, urgency: notif.urgency)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(notif.question)
                     .font(.body)
-                    .lineLimit(3)
+                    .lineLimit(isExpanded ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                 HStack(spacing: 6) {
                     Text(notif.agent_name)
@@ -95,7 +156,7 @@ struct NotificationRowView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text(notif.question_type.rawValue)
+                    Text(isCelebration ? "milestone" : notif.question_type.rawValue)
                         .font(.caption2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -104,9 +165,6 @@ struct NotificationRowView: View {
                 }
             }
         }
-        .padding(14)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

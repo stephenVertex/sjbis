@@ -121,6 +121,9 @@
   function isForm(n) { return !!(n && n.question_type === 'form' && Array.isArray(n.sub_questions) && n.sub_questions.length); }
   function formSub(n) { return isForm(n) ? n.sub_questions[Math.min(S.formIdx || 0, n.sub_questions.length - 1)] : null; }
   function unit(n) {
+    if (n && n.question_type === 'celebrate') {
+      return Object.assign({}, n, { question_type: 'ack', ack_label: n.ack_label || 'Celebrate' });
+    }
     var sq = formSub(n);
     if (!sq) return n;
     return { question_type: FORM_SHAPES[sq.shape] || 'unsupported', question: sq.question, choices: sq.choices, min: sq.min, max: sq.max,
@@ -379,7 +382,8 @@
     var keepScroll = card.dataset.id === n.id && $('c-detail') ? $('c-detail').scrollTop : 0;
     var u = unit(n), appr = isApproval(n), opts = options(u), t = u.question_type, down = appr && !S.sidecarUp;
     var dis = S.busy || down, h = [];
-    h.push('<div class="meta"><b>' + esc(n.agent_name) + '</b> · ' + esc(n.src) + ' · <span class="urg' + (n.urgency >= 4 ? ' hot' : '')
+    h.push('<div class="meta">' + (n.question_type === 'celebrate' ? '<span class="milestone">🎉 Milestone · </span>' : '')
+      + '<b>' + esc(n.agent_name) + '</b> · ' + esc(n.src) + ' · <span class="urg' + (n.urgency >= 4 ? ' hot' : '')
       + '">U' + esc(n.urgency) + '</span> · <span id="c-age">' + esc(fmtAge(n.created_at, Date.now())) + '</span></div>');
     var hasDetail = !!(n.detail_markdown || n.detail);
     h.push('<h1 class="q' + (n.question.length > 300 ? ' xlong' : n.question.length > 110 ? ' long' : '') + (hasDetail ? '' : ' nodetail')

@@ -298,18 +298,23 @@ async fn record_outcome(state: &AppState, device_id: &str, outcome: &Outcome) {
     }
 }
 
-/// The payload for a new ask. Title is the agent, body the question.
-pub fn ask_payload(n: &Notification) -> Value {
-    let title = if n.urgency >= 4 {
+pub(crate) fn ask_push_title(n: &Notification) -> String {
+    if n.question_type == crate::models::QuestionType::Celebrate {
+        format!("🎉 {}", n.agent_name)
+    } else if n.urgency >= 4 {
         format!("\u{1F6A8} {}", n.agent_name)
     } else {
         n.agent_name.clone()
-    };
+    }
+}
+
+/// The payload for a new ask. The body is the question.
+pub fn ask_payload(n: &Notification) -> Value {
     let body = truncate_chars(&n.question, 180);
     let mut v = json!({
         "kind": "ask",
         "id": n.id,
-        "title": title,
+        "title": ask_push_title(n),
         "body": body,
         "type": n.question_type.to_string(),
         "urgency": n.urgency,
@@ -446,6 +451,17 @@ mod tests {
         assert!(p["body"].as_str().unwrap().chars().count() <= 181);
         assert!(p["body"].as_str().unwrap().ends_with('\u{2026}'));
         assert!(p.to_string().len() < MAX_PAYLOAD);
+        let milestone = Notification {
+            question_type: crate::models::QuestionType::Celebrate,
+            question: "v2.4 shipped".into(),
+            blocking: false,
+            urgency: 2,
+            ..n
+        };
+        let p = ask_payload(&milestone);
+        assert_eq!(p["type"], "celebrate");
+        assert_eq!(p["title"], "🎉 agent-x");
+        assert_eq!(p["body"], "v2.4 shipped");
         let c = closed_payload("sjbis-abc", "agent-x", "answered: Approved");
         assert_eq!(c["kind"], "closed");
         assert_eq!(c["body"], "answered: Approved");

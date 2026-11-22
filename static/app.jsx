@@ -29,6 +29,7 @@ const TYPE_ICONS = {
   file:        '↥',
   diff:        '±',
   ack:         '✓',
+  celebrate:   '🎉',
   picklist:    '☰',
   schedule:    '◷',
   form:        '▤',
@@ -296,6 +297,7 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef, no
   const agent = agents[n.agent_name] || agents[n.agent] || { glyph: '◐', name: n.agent_name || n.agent };
   const color = window.agentColor(n.agent_name || n.agent);
   const resolved = n._resolved;
+  const celebrates = (n.question_type || n.type) === 'celebrate';
   const fadeDelayMs = Math.max(0, (n._lingerMs || 3500) - 600);
   // When resolving, the card runs the `cardResolveOut` animation and its
   // delay must be the linger time. Inline styles override stylesheet rules,
@@ -306,7 +308,7 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef, no
   return (
     <div
       ref={cardRef}
-      className={`card u${n.urgency}${selected ? ' is-selected' : ''}${resolved ? ' is-resolving' : ''}`}
+      className={`card u${n.urgency}${celebrates ? ' milestone' : ''}${selected ? ' is-selected' : ''}${resolved ? ' is-resolving' : ''}`}
       style={cardStyle}
       onClick={resolved ? undefined : onClick}
     >
@@ -336,7 +338,7 @@ function NotificationCard({ n, onClick, onDismiss, agents, selected, cardRef, no
         <span className="k">d</span>
       </button>
       <div className="card-hd">
-        <div className="glyph">{agent.glyph}</div>
+        <div className="glyph">{celebrates ? '🎉' : agent.glyph}</div>
         <div className="meta">
           <div className="name">{agent.name} · {n.sender || n.instance || 'unknown'}</div>
         </div>

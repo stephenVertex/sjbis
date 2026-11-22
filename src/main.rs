@@ -892,6 +892,7 @@ QUESTION TYPES
   --number          Numeric slider (use --min, --max, --step, --unit)
   --choices "a,b,c" Multi-choice (CSV) or JSON array
   --ack             Acknowledge-only (no data collected)
+  --celebrate       Announce a milestone with a celebratory alert
   --file            File upload request (use --accept ".pdf,.csv")
   --diff            Approve/reject a code diff
   --pick <file>     Pick from a list of items (JSON file: [{"id","title","meta"}, ...])

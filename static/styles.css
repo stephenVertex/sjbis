@@ -495,6 +495,8 @@ button { font-family: inherit; }
 .card.u5 .ribbon { background: var(--siren); opacity: 1; height: 4px;
   box-shadow: 0 0 16px var(--siren); }
 .card.u4 .ribbon { background: var(--hot); opacity: 0.9; }
+.card.milestone .ribbon { background: linear-gradient(90deg, #d6a8ff, #ffd68c, #92ebd3); opacity: 0.95; }
+.focus.milestone .focus-hd { background: linear-gradient(100deg, #b868d32a, #e4aa4e22); }
 
 .card-hd {
   display: flex; align-items: center; gap: 10px;

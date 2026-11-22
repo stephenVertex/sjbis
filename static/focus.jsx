@@ -10,6 +10,7 @@ const TYPE_LABEL = {
   file: 'File upload',
   diff: 'Approve / reject',
   ack: 'Acknowledge',
+  celebrate: 'Milestone',
   picklist: 'Pick from list',
   schedule: 'Schedule',
   form: 'Form',
@@ -698,14 +699,15 @@ function DiffRenderer({ n, onAnswer }) {
 }
 
 function AckRenderer({ n, onAnswer }) {
+  const label = n.ackLabel || (n.type === 'celebrate' ? 'Celebrate' : null);
   useFocusKeys([
     { match: (e) => e.key === 'Enter' || e.key === ' ',
-      fn: () => onAnswer(n.ackLabel || 'Acknowledged') },
-  ], [n, onAnswer]);
+      fn: () => onAnswer(label || 'Acknowledged') },
+  ], [label, onAnswer]);
   return (
     <div className="ack-area">
-      <button className="ack-btn" onClick={() => onAnswer(n.ackLabel || 'Acknowledged')}>
-        {n.ackLabel || 'Got it'}
+      <button className="ack-btn" onClick={() => onAnswer(label || 'Acknowledged')}>
+        {label || 'Got it'}
       </button>
       <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-3)',
                     letterSpacing: '0.08em', textTransform: 'uppercase' }}>
@@ -975,6 +977,7 @@ const RENDERERS = {
   file: FileRenderer,
   diff: DiffRenderer,
   ack: AckRenderer,
+  celebrate: AckRenderer,
   picklist: PicklistRenderer,
   schedule: ScheduleRenderer,
   form: FormRenderer,
@@ -1091,6 +1094,7 @@ function Focus({ n, nowMs, canonicalUrl, onClose, onAnswer, onDismiss, onSnooze 
   const isOpen = nn.status === 'open';
   // Approval cards are locked: no answer controls and no note composer here.
   const locked = nn.type === 'approval';
+  const celebrates = nn.type === 'celebrate';
   const [snoozing, setSnoozing] = React.useState(false);
   const [note, setNote] = React.useState('');
   const [showNote, setShowNote] = React.useState(false);
@@ -1148,9 +1152,9 @@ function Focus({ n, nowMs, canonicalUrl, onClose, onAnswer, onDismiss, onSnooze 
   return (
     <>
       <div className="focus-backdrop" onClick={onClose} />
-      <div className="focus" role="dialog" aria-modal="true" aria-label={`Notification ${nn.id}`} style={{ '--agent': color }}>
+      <div className={celebrates ? 'focus milestone' : 'focus'} role="dialog" aria-modal="true" aria-label={`Notification ${nn.id}`} style={{ '--agent': color }}>
         <div className="focus-hd">
-          <div className="glyph">{agent.glyph}</div>
+          <div className="glyph">{celebrates ? '🎉' : agent.glyph}</div>
           <div className="meta">
             <div className="label">
               <strong>{nn.sender}</strong> via {agent.name} · {window.SjbisTime.formatAge(nn.sentAt, { nowMs })} · {TYPE_LABEL[nn.type] || nn.type}

@@ -8,6 +8,7 @@ enum QuestionType: String, Codable, CaseIterable {
     case file
     case diff
     case ack
+    case celebrate
     case picklist
     case schedule
     case form
