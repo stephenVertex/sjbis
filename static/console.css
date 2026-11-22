@@ -18,13 +18,33 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .card { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1.4vh; }
 .meta { font-size: 3vh; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .meta b { color: var(--fg); }
-.meta .milestone { color: #ffd68c; }
+.meta .milestone { color: #ffd68c; font-weight: 700; }
+.meta .milestone::before { content: ""; display: inline-block; width: 1.5vh; height: 1.5vh;
+  margin: 0 1vh 0 0.3vh; background: currentColor; transform: rotate(45deg); }
 .urg { padding: 0 1vh; border-radius: 0.6vh; background: var(--line); color: var(--fg); }
 .urg.hot { background: var(--bad); color: #000; }
 .q { margin: 0; font-size: 6vh; line-height: 1.15; font-weight: 700; max-height: 22vh; overflow: auto; }
 .q.long { font-size: 4.4vh; }
 .q.xlong { font-size: 3.4vh; font-weight: 600; line-height: 1.25; max-height: 40vh; }
 .q.nodetail { max-height: 58vh; }
+.q.milestone-title { max-height: 22vh; }
+.celebration-art { position: relative; flex: 1; min-height: 16vh; overflow: hidden;
+  border: 0.25vh solid #765280; border-radius: 1.8vh;
+  background: radial-gradient(ellipse at center, #733848 0%, transparent 54%), linear-gradient(112deg, #281943, #25182d 54%, #4b2b16); }
+.celebration-art.compact { flex: 0 0 20vh; }
+.celebration-burst { position: absolute; left: 50%; top: 50%; width: 31vh; height: 31vh;
+  transform: translate(-50%, -50%); filter: drop-shadow(0 0 3vh #ffbe6270); }
+.celebration-art.compact .celebration-burst { scale: 0.57; }
+.celebration-burst::before, .celebration-burst::after { content: ""; position: absolute; inset: 0;
+  clip-path: polygon(50% 0, 60% 38%, 100% 50%, 61% 60%, 50% 100%, 39% 61%, 0 50%, 39% 39%); }
+.celebration-burst::before { background: linear-gradient(140deg, #fff4c4, #ffd277 52%, #f28544); }
+.celebration-burst::after { inset: 23%; transform: rotate(45deg); background: #fff3c2; opacity: 0.74; }
+.confetti { position: absolute; top: var(--y); left: var(--x); width: 1.8vh; height: 1.1vh;
+  border-radius: 0.2vh; background: #ffd277; transform: rotate(var(--angle)); }
+.confetti:nth-of-type(4n) { background: #ff85a1; width: 0.9vh; height: 1.9vh; }
+.confetti:nth-of-type(4n + 1) { background: #c89cfb; width: 1.3vh; height: 1.3vh; }
+.confetti:nth-of-type(4n + 2) { background: #81e7d1; }
+.confetti:nth-of-type(5n) { border-radius: 100%; width: 1.15vh; height: 1.15vh; }
 .detail { flex: 1; min-height: 8vh; overflow: auto; padding: 1.2vh 2vw; font-size: 3.2vh; line-height: 1.35;
   background: var(--panel); border: 0.25vh solid var(--line); border-radius: 1vh; }
 .detail.plain { white-space: pre-wrap; }
@@ -49,6 +69,7 @@ button .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 button kbd { white-space: nowrap; font-family: var(--mono); font-size: 2.8vh; padding: 0 0.8vh; border: 0.2vh solid currentColor;
   border-radius: 0.6vh; opacity: 0.85; }
 button.yes { border-color: var(--ok); } button.no { border-color: var(--bad); }
+button.celebrate-action { color: #ffe5ad; border-color: #ffd277; background: linear-gradient(100deg, #332046, #3e2731 55%, #492d18); }
 button.sel { background: var(--ok); color: #000; border-color: var(--ok); }
 button.arm { background: var(--warn); color: #000; border-color: var(--warn); }
 button:disabled { opacity: 0.35; cursor: default; }

@@ -26,6 +26,13 @@
   var DISMISS_ARM_MS = 2500; // second DISMISS press must land within this window
   var GRANT_SHOW_MS = 5000;
   var CHOICE_TYPES = { multichoice: 1, picklist: 1, schedule: 1, approval: 1 };
+  var MILESTONE_CONFETTI = [
+    [7, 24, -24], [10, 67, 28], [15, 42, 46], [19, 78, -18], [22, 19, 17], [25, 57, 34],
+    [29, 33, -41], [32, 82, 22], [36, 12, -23], [37, 60, 42], [42, 26, 19], [43, 76, -27],
+    [49, 15, 26], [54, 85, 40], [58, 24, -32], [60, 70, 18], [64, 44, -12], [66, 80, -36],
+    [70, 15, 31], [72, 62, 52], [76, 33, -35], [81, 75, -19], [84, 23, 25], [87, 51, -28],
+    [92, 71, 40], [94, 34, 15],
+  ];
 
   var S = {
     queue: [], cur: null, sel: null, ttlIdx: 1, busy: false, msg: '', msgCls: '',
@@ -371,6 +378,13 @@
     $('c-hdr').innerHTML = (n ? '<span class="pos" id="c-pos">' + (i + 1) + ' of ' + S.queue.length + '</span>' : '<span class="pos">SJBIS</span>')
       + '<span class="sp"></span>' + side + conn + '<span id="c-clock">' + esc(clock()) + '</span>';
   }
+  function milestoneArtwork(hasDetail) {
+    var pieces = MILESTONE_CONFETTI.map(function (piece) {
+      return '<span class="confetti" style="--x:' + piece[0] + '%;--y:' + piece[1] + '%;--angle:' + piece[2] + 'deg"></span>';
+    }).join('');
+    return '<div class="celebration-art' + (hasDetail ? ' compact' : '') + '" aria-hidden="true">'
+      + '<span class="celebration-burst"></span>' + pieces + '</div>';
+  }
   function renderCard(n) {
     var card = $('c-card');
     if (!n) {
@@ -381,16 +395,19 @@
     }
     var keepScroll = card.dataset.id === n.id && $('c-detail') ? $('c-detail').scrollTop : 0;
     var u = unit(n), appr = isApproval(n), opts = options(u), t = u.question_type, down = appr && !S.sidecarUp;
+    var celebrates = n.question_type === 'celebrate';
     var dis = S.busy || down, h = [];
-    h.push('<div class="meta">' + (n.question_type === 'celebrate' ? '<span class="milestone">🎉 Milestone · </span>' : '')
+    h.push('<div class="meta">' + (celebrates ? '<span class="milestone">Milestone</span> · ' : '')
       + '<b>' + esc(n.agent_name) + '</b> · ' + esc(n.src) + ' · <span class="urg' + (n.urgency >= 4 ? ' hot' : '')
       + '">U' + esc(n.urgency) + '</span> · <span id="c-age">' + esc(fmtAge(n.created_at, Date.now())) + '</span></div>');
     var hasDetail = !!(n.detail_markdown || n.detail);
     h.push('<h1 class="q' + (n.question.length > 300 ? ' xlong' : n.question.length > 110 ? ' long' : '') + (hasDetail ? '' : ' nodetail')
+      + (celebrates ? ' milestone-title' : '')
       + '" id="c-q">' + esc(n.question) + '</h1>');
+    if (celebrates) h.push(milestoneArtwork(hasDetail));
     if (n.detail_markdown) h.push('<div class="detail" id="c-detail">' + md(n.detail_markdown) + '</div>');
     else if (n.detail) h.push('<div class="detail plain" id="c-detail">' + esc(n.detail) + '</div>');
-    else h.push('<div class="spacer"></div>');
+    else if (!celebrates) h.push('<div class="spacer"></div>');
     if (isForm(n)) {
       h.push('<div class="formq"><span class="step">' + (S.formIdx + 1) + ' / ' + n.sub_questions.length + '</span>' + esc(formSub(n).question) + '</div>');
     }
@@ -411,7 +428,7 @@
       row.push(btn('yes', 'Y', t === 'diff' ? 'Approve' : u.yes_label || 'Yes', 'yes', S.busy));
       row.push(btn('no', 'N', t === 'diff' ? 'Reject' : u.no_label || 'No', 'no', S.busy));
     } else if (t === 'ack') {
-      row.push(btn('yes', 'Y', u.ack_label || 'Acknowledged', 'yes', S.busy));
+      row.push(btn('yes', 'Y', u.ack_label || 'Acknowledged', celebrates ? 'celebrate-action' : 'yes', S.busy));
     } else if (t === 'numeric') {
       h.push('<div class="num" id="c-num">' + esc(numFmt(S.num)) + (u.unit ? ' <span class="unit">' + esc(u.unit) + '</span>' : '')
         + '<span class="range">' + esc(numRange(u)) + ' · step ' + esc(numFmt(numStep(u))) + '</span></div>');

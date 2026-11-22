@@ -261,7 +261,10 @@
     const milestone = ask('c-celebrate', 9, { question: 'v2.4 shipped', question_type: 'celebrate' });
     h.sources.at(-1).emit({ event: 'notification_created', notification: milestone });
     key('k');
-    assert(question() === milestone.question && text('#c-card .meta').includes('🎉 Milestone'), 'milestone is marked in the console');
+    assert(question() === milestone.question && text('#c-card .milestone') === 'Milestone', 'milestone is marked in the console');
+    const celebration = $('#c-card .celebration-art');
+    assert(celebration && celebration.getBoundingClientRect().height > 100 && celebration.querySelectorAll('.confetti').length > 12,
+      'milestone fills the card with font-independent confetti artwork');
     assert(text('button[data-act="yes"]').includes('Celebrate'), 'milestone has a Celebrate action');
     key('y');
     await waitFor(() => h.answers.some((a) => a.id === milestone.id && a.body.answer === 'Celebrate'), 'celebrate posts an acknowledgment');

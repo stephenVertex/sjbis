@@ -302,6 +302,13 @@ internet (no CDN scripts or fonts) and sizes everything in viewport units, so
 `GET /events` (reconnecting with backoff), and posts plain answers to
 `POST /answer/{id}` with `via: "console"`.
 
+The deployed kiosk is `dashboard-pi.tailb4b58.ts.net`, a Raspberry Pi 400
+driving a 1920×1080 display. On that host, `~/.config/labwc/autostart` launches
+`~/.local/bin/kiosk.sh`, which opens Chromium in Wayland kiosk mode at
+`http://dertog.tailb4b58.ts.net:7878/console?sidecar=http://127.0.0.1:7879`.
+The systemd user service `streamdeck-keys.service` maps Stream Deck buttons
+to console shortcuts, and `ta-console.service` runs the local signer.
+
 | Key | Action |
 |---|---|
 | `Y` / `N` | yes / no (approval: approve / deny) |
@@ -313,7 +320,9 @@ internet (no CDN scripts or fonts) and sizes everything in viewport units, so
 | form asks | one sub-question at a time with the keys above; `Backspace` steps back; the last one submits the form |
 | `Left`/`Right`, `K`/`J` | previous / next ask |
 | `Up`/`Down`, `PgUp`/`PgDn` | scroll the detail box |
+| `H`, `Esc` | open / leave Missed while away |
 | `R` | reload the queue and recheck the sidecar |
+| `Ctrl`+`Shift`+`R` | hard-reload Chromium after deploying console assets |
 
 Approval asks cannot be answered from the browser. The console delegates them
 to a local signing sidecar, `ta console`, at the `sidecar` query parameter
@@ -335,9 +344,25 @@ to a local signing sidecar, `ta console`, at the `sidecar` query parameter
 Sample Chromium kiosk command on the Pi (which runs `ta console` as the sidecar):
 
 ```bash
-chromium-browser --kiosk --noerrdialogs --disable-infobars \
-  --app=http://dertog.tailb4b58.ts.net:7878/console
+chromium --kiosk --ozone-platform=wayland \
+  --app='http://dertog.tailb4b58.ts.net:7878/console?sidecar=http://127.0.0.1:7879'
 ```
+
+### Verify a milestone on the kiosk
+
+Post a short-lived milestone against the same daemon the kiosk uses:
+
+```bash
+sjbis ask --daemon http://dertog.tailb4b58.ts.net:7878 --celebrate \
+  --agent-name 'Pi kiosk test' --question 'Pi kiosk milestone test' \
+  --urgency 1 --deadline 5m --json
+```
+
+The console shows a gold **Milestone** label, a large confetti panel, and a
+**Celebrate** button. If another ask is already selected, use `J` or `K` to find
+the test card. Press `Y` or click **Celebrate**. The card clears, and
+`GET /notification/{id}` reports `status: "answered"`, `answer: "Celebrate"`,
+and `answer_label: "console"` for the ID returned by the CLI.
 
 Browser regression: serve the repository root over HTTP
 (`python3 -m http.server 8000`) and open
