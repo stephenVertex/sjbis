@@ -8,7 +8,7 @@ struct NotificationListView: View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 if store.notifications.isEmpty && store.missed.isEmpty {
-                    EmptyStateView(error: store.connectionError)
+                    EmptyStateView(status: store.connectionStatus, error: store.connectionError)
                 }
                 ForEach(store.notifications) { notif in
                     FoldableNotificationCard(isExpanded: expanded(notif.id)) { isExpanded in
@@ -96,6 +96,7 @@ private struct FoldableNotificationCard<Content: View>: View {
 }
 
 struct EmptyStateView: View {
+    let status: ConnectionStatus
     let error: String?
     var body: some View {
         VStack(spacing: 12) {
@@ -109,6 +110,10 @@ struct EmptyStateView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+            } else if status == .connecting || status == .reconnecting {
+                Text("Connecting to SJBIS…")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
             } else {
                 Image(systemName: "checkmark.circle")
                     .font(.system(size: 48))

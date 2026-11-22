@@ -1,5 +1,12 @@
 import Foundation
 
+enum ConnectionStatus: String {
+    case connecting = "Connecting"
+    case live = "Live"
+    case reconnecting = "Reconnecting"
+    case offline = "Offline"
+}
+
 @MainActor
 final class SjbisStore: ObservableObject {
     @Published var notifications: [SjbisNotification] = []
@@ -7,7 +14,7 @@ final class SjbisStore: ObservableObject {
     @Published var history: [SjbisNotification] = []
     @Published var agents: [String: Agent] = [:]
     @Published var rules: [Rule] = []
-    @Published var isConnected = false
+    @Published private(set) var connectionStatus: ConnectionStatus = .connecting
     @Published var connectionError: String?
     @Published var daemonVersion: String?
 
@@ -51,6 +58,7 @@ final class SjbisStore: ObservableObject {
             daemonVersion = state.version
             connectionError = nil
         } catch {
+            guard !Task.isCancelled, generation == refreshGeneration else { return }
             connectionError = error.localizedDescription
         }
     }
@@ -70,41 +78,52 @@ final class SjbisStore: ObservableObject {
 
     func startSSE() {
         sseTask?.cancel()
+        connectionStatus = .connecting
+        connectionError = nil
         sseTask = Task { await sseLoop() }
     }
 
     func stopSSE() {
         sseTask?.cancel()
         sseTask = nil
-        isConnected = false
+        connectionStatus = .offline
     }
 
     private func sseLoop() async {
+        guard !Task.isCancelled else { return }
+        guard let url = URL(string: "\(daemonURL)/events") else {
+            connectionStatus = .offline
+            connectionError = URLError(.badURL).localizedDescription
+            return
+        }
+        var request = URLRequest(url: url)
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+
         while !Task.isCancelled {
             do {
-                let url = URL(string: "\(daemonURL)/events")!
-                var request = URLRequest(url: url)
-                request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                guard !Task.isCancelled else { return }
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw URLError(.badServerResponse)
                 }
-                await MainActor.run { isConnected = true; connectionError = nil }
+                connectionStatus = .live
+                connectionError = nil
                 await refresh()
                 for try await line in bytes.lines {
-                    if Task.isCancelled { break }
+                    guard !Task.isCancelled else { return }
                     if line.hasPrefix("data:") {
                         let json = String(line.dropFirst(5).trimmingCharacters(in: .whitespaces))
                         handleSSEEvent(json)
                     }
                 }
+                guard !Task.isCancelled else { return }
+                connectionStatus = .reconnecting
             } catch {
-                await MainActor.run {
-                    isConnected = false
-                    connectionError = error.localizedDescription
-                }
-                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled else { return }
+                connectionStatus = (error as? URLError)?.code == .notConnectedToInternet ? .offline : .reconnecting
+                connectionError = error.localizedDescription
             }
+            try? await Task.sleep(for: .seconds(3))
         }
     }
 

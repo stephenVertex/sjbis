@@ -17,7 +17,7 @@ struct ContentView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
-                            ConnectionIndicator(connected: store.isConnected)
+                            ConnectionIndicator(status: store.connectionStatus)
                         }
                         ToolbarItem(placement: .topBarTrailing) {
                             Button { showingSettings = true } label: {
@@ -49,7 +49,7 @@ struct ContentView: View {
             if scenePhase == .active {
                 push.syncRegistration()
                 store.startSSE()
-            } else {
+            } else if scenePhase == .background {
                 store.stopSSE()
             }
         }
@@ -72,16 +72,26 @@ struct ContentView: View {
 }
 
 struct ConnectionIndicator: View {
-    let connected: Bool
+    let status: ConnectionStatus
+
     var body: some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(connected ? Color.green : Color.red)
-                .frame(width: 8, height: 8)
-            Text(connected ? "Live" : "Offline")
+            switch status {
+            case .connecting, .reconnecting:
+                ProgressView()
+                    .controlSize(.mini)
+                    .accessibilityHidden(true)
+            case .live, .offline:
+                Circle()
+                    .fill(status == .live ? Color.green : Color.red)
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+            }
+            Text(status.rawValue)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+        .fixedSize()
     }
 }
 

@@ -14,18 +14,17 @@ struct SettingsView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                     Button("Save & Reconnect") {
-                        AppSettings.shared.daemonURL = daemonURL
-                        store.stopSSE()
-                        Task {
-                            await store.refresh()
+                        if daemonURL == AppSettings.shared.daemonURL {
                             store.startSSE()
+                        } else {
+                            AppSettings.shared.daemonURL = daemonURL
                         }
                         dismiss()
                     }
                     .disabled(daemonURL.isEmpty)
                 }
                 Section("Status") {
-                    LabeledContent("Connected", value: store.isConnected ? "Yes" : "No")
+                    LabeledContent("Connection", value: store.connectionStatus.rawValue)
                     if let err = store.connectionError {
                         LabeledContent("Error", value: err)
                     }
