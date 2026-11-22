@@ -309,6 +309,11 @@ driving a 1920×1080 display. On that host, `~/.config/labwc/autostart` launches
 The systemd user service `streamdeck-keys.service` maps Stream Deck buttons
 to console shortcuts, and `ta-console.service` runs the local signer.
 
+For the personal **Mazel tov** action, append `&mazel-tov=1` to the URL in
+the local `kiosk.sh` launcher and restart Chromium. This adds a second
+milestone button and shortcut `V` for that kiosk. Remove the parameter to
+turn the option off.
+
 | Key | Action |
 |---|---|
 | `Y` / `N` | yes / no (approval: approve / deny) |
@@ -358,7 +363,7 @@ sjbis ask --daemon http://dertog.tailb4b58.ts.net:7878 --celebrate \
   --urgency 1 --deadline 5m --json
 ```
 
-The console shows a gold **Milestone** label, a large confetti panel, and a
+The console shows a gold **Milestone** label, a fireworks panel, and a
 **Celebrate** button. If another ask is already selected, use `J` or `K` to find
 the test card. Press `Y` or click **Celebrate**. The card clears, and
 `GET /notification/{id}` reports `status: "answered"`, `answer: "Celebrate"`,

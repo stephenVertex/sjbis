@@ -29,22 +29,21 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .q.nodetail { max-height: 58vh; }
 .q.milestone-title { max-height: 22vh; }
 .celebration-art { position: relative; flex: 1; min-height: 16vh; overflow: hidden;
-  border: 0.25vh solid #765280; border-radius: 1.8vh;
-  background: radial-gradient(ellipse at center, #733848 0%, transparent 54%), linear-gradient(112deg, #281943, #25182d 54%, #4b2b16); }
+  border: 0.25vh solid #484569; border-radius: 1.8vh;
+  background: radial-gradient(ellipse at 24% 0%, #222845, transparent 62%), linear-gradient(150deg, #080d22, #12132b 58%, #221329); }
 .celebration-art.compact { flex: 0 0 20vh; }
-.celebration-burst { position: absolute; left: 50%; top: 50%; width: 31vh; height: 31vh;
-  transform: translate(-50%, -50%); filter: drop-shadow(0 0 3vh #ffbe6270); }
-.celebration-art.compact .celebration-burst { scale: 0.57; }
-.celebration-burst::before, .celebration-burst::after { content: ""; position: absolute; inset: 0;
-  clip-path: polygon(50% 0, 60% 38%, 100% 50%, 61% 60%, 50% 100%, 39% 61%, 0 50%, 39% 39%); }
-.celebration-burst::before { background: linear-gradient(140deg, #fff4c4, #ffd277 52%, #f28544); }
-.celebration-burst::after { inset: 23%; transform: rotate(45deg); background: #fff3c2; opacity: 0.74; }
-.confetti { position: absolute; top: var(--y); left: var(--x); width: 1.8vh; height: 1.1vh;
-  border-radius: 0.2vh; background: #ffd277; transform: rotate(var(--angle)); }
-.confetti:nth-of-type(4n) { background: #ff85a1; width: 0.9vh; height: 1.9vh; }
-.confetti:nth-of-type(4n + 1) { background: #c89cfb; width: 1.3vh; height: 1.3vh; }
-.confetti:nth-of-type(4n + 2) { background: #81e7d1; }
-.confetti:nth-of-type(5n) { border-radius: 100%; width: 1.15vh; height: 1.15vh; }
+.firework { position: absolute; left: var(--x); top: var(--y); width: min(37vh, 27vw); aspect-ratio: 1;
+  transform: translate(-50%, -50%) scale(var(--size)); }
+.celebration-art.compact .firework { width: min(21vh, 20vw); }
+.firework::before { content: ""; position: absolute; inset: 25%; opacity: 0.22;
+  background: radial-gradient(circle, var(--color), transparent 69%); }
+.firework-trail { position: absolute; inset: 0; transform: rotate(var(--angle)); }
+.firework-trail::before, .firework-trail::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); }
+.firework-trail::before { top: var(--tip); width: 1.2%; height: var(--tail); border-radius: 100% 100% 45% 45%;
+  background: linear-gradient(to bottom, var(--color), transparent); }
+.firework-trail::after { top: calc(var(--tip) - 2.8%); width: 1.8%; aspect-ratio: 1; border-radius: 50%;
+  background: var(--color); box-shadow: 0 0 0.75vh var(--color); }
+.firework-trail:nth-child(3n)::after { background: #fff4df; }
 .detail { flex: 1; min-height: 8vh; overflow: auto; padding: 1.2vh 2vw; font-size: 3.2vh; line-height: 1.35;
   background: var(--panel); border: 0.25vh solid var(--line); border-radius: 1vh; }
 .detail.plain { white-space: pre-wrap; }
@@ -70,6 +69,7 @@ button kbd { white-space: nowrap; font-family: var(--mono); font-size: 2.8vh; pa
   border-radius: 0.6vh; opacity: 0.85; }
 button.yes { border-color: var(--ok); } button.no { border-color: var(--bad); }
 button.celebrate-action { color: #ffe5ad; border-color: #ffd277; background: linear-gradient(100deg, #332046, #3e2731 55%, #492d18); }
+button.mazel-tov-action { color: #f0dfff; border-color: #c7a5ff; background: #281e38; }
 button.sel { background: var(--ok); color: #000; border-color: var(--ok); }
 button.arm { background: var(--warn); color: #000; border-color: var(--warn); }
 button:disabled { opacity: 0.35; cursor: default; }

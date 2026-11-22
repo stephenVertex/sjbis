@@ -6,7 +6,9 @@
 
   var BASE = window.__SJBIS_BASE_PATH__ != null ? window.__SJBIS_BASE_PATH__
     : window.location.pathname.replace(/\/console(\.html)?\/?$/, '').replace(/\/+$/, '');
-  var SIDECAR = (new URLSearchParams(window.location.search).get('sidecar') || 'http://127.0.0.1:7879').replace(/\/+$/, '');
+  var params = new URLSearchParams(window.location.search);
+  var SIDECAR = (params.get('sidecar') || 'http://127.0.0.1:7879').replace(/\/+$/, '');
+  var PERSONAL_CELEBRATION = params.get('mazel-tov') === '1';
   var PRESET_TTLS = [[600, '10m'], [3600, '1h'], [86400, '24h']];
   function fmtTtl(secs) {
     if (secs % 86400 === 0) return (secs / 86400) + 'd';
@@ -26,12 +28,12 @@
   var DISMISS_ARM_MS = 2500; // second DISMISS press must land within this window
   var GRANT_SHOW_MS = 5000;
   var CHOICE_TYPES = { multichoice: 1, picklist: 1, schedule: 1, approval: 1 };
-  var MILESTONE_CONFETTI = [
-    [7, 24, -24], [10, 67, 28], [15, 42, 46], [19, 78, -18], [22, 19, 17], [25, 57, 34],
-    [29, 33, -41], [32, 82, 22], [36, 12, -23], [37, 60, 42], [42, 26, 19], [43, 76, -27],
-    [49, 15, 26], [54, 85, 40], [58, 24, -32], [60, 70, 18], [64, 44, -12], [66, 80, -36],
-    [70, 15, 31], [72, 62, 52], [76, 33, -35], [81, 75, -19], [84, 23, 25], [87, 51, -28],
-    [92, 71, 40], [94, 34, 15],
+  var FIREWORKS = [
+    { x: 16, y: 52, scale: 0.86, color: '#ffc47b', rays: 19 },
+    { x: 32, y: 28, scale: 0.58, color: '#92aaff', rays: 13 },
+    { x: 48, y: 57, scale: 1.11, color: '#ff8fc2', rays: 24 },
+    { x: 69, y: 37, scale: 0.92, color: '#83eedc', rays: 21 },
+    { x: 87, y: 62, scale: 0.74, color: '#c7a5ff', rays: 16 },
   ];
 
   var S = {
@@ -281,6 +283,7 @@
     }));
   }
   function closeGrant() { clearTimeout(S.grantTimer); S.grant = null; render(); }
+  function canMazelTov(n) { return PERSONAL_CELEBRATION && n && n.question_type === 'celebrate'; }
   function removeMissed(id) {
     ++loadGeneration;
     S.missed = S.missed.filter(function (n) { return n.id !== id; });
@@ -302,6 +305,10 @@
     if (name === 'next') return step(1);
     if (name === 'reload') { setMsg(''); checkSidecar(); if (!es) connect(); return load(); }
     if (!n || S.busy) return;
+    if (name === 'mazel-tov') {
+      if (canMazelTov(n)) return answer(n, 'Mazel tov');
+      return;
+    }
     var u = unit(n), t = u.question_type, opts = options(u);
     if (name === 'note') { noteEl.focus(); return; }
     if (name === 'back') { if (isForm(n) && S.formIdx > 0) formGoto(n, S.formIdx - 1); return; }
@@ -379,11 +386,18 @@
       + '<span class="sp"></span>' + side + conn + '<span id="c-clock">' + esc(clock()) + '</span>';
   }
   function milestoneArtwork(hasDetail) {
-    var pieces = MILESTONE_CONFETTI.map(function (piece) {
-      return '<span class="confetti" style="--x:' + piece[0] + '%;--y:' + piece[1] + '%;--angle:' + piece[2] + 'deg"></span>';
+    var bursts = FIREWORKS.map(function (burst, index) {
+      var trails = [];
+      for (var i = 0; i < burst.rays; i++) {
+        var angle = (360 * i / burst.rays + index * 9).toFixed(1);
+        var tip = 3 + (i * 7 + index * 3) % 13;
+        var tail = 17 + (i * 11 + index * 5) % 13;
+        trails.push('<span class="firework-trail" style="--angle:' + angle + 'deg;--tip:' + tip + '%;--tail:' + tail + '%"></span>');
+      }
+      return '<span class="firework" style="--x:' + burst.x + '%;--y:' + burst.y + '%;--size:' + burst.scale
+        + ';--color:' + burst.color + '">' + trails.join('') + '</span>';
     }).join('');
-    return '<div class="celebration-art' + (hasDetail ? ' compact' : '') + '" aria-hidden="true">'
-      + '<span class="celebration-burst"></span>' + pieces + '</div>';
+    return '<div class="celebration-art' + (hasDetail ? ' compact' : '') + '" aria-hidden="true">' + bursts + '</div>';
   }
   function renderCard(n) {
     var card = $('c-card');
@@ -429,6 +443,7 @@
       row.push(btn('no', 'N', t === 'diff' ? 'Reject' : u.no_label || 'No', 'no', S.busy));
     } else if (t === 'ack') {
       row.push(btn('yes', 'Y', u.ack_label || 'Acknowledged', celebrates ? 'celebrate-action' : 'yes', S.busy));
+      if (canMazelTov(n)) row.push(btn('mazel-tov', 'V', 'Mazel tov', 'mazel-tov-action', S.busy));
     } else if (t === 'numeric') {
       h.push('<div class="num" id="c-num">' + esc(numFmt(S.num)) + (u.unit ? ' <span class="unit">' + esc(u.unit) + '</span>' : '')
         + '<span class="range">' + esc(numRange(u)) + ' · step ' + esc(numFmt(numStep(u))) + '</span></div>');
@@ -526,6 +541,7 @@
       return;
     }
     if (key === 'h' && S.missed.length) { e.preventDefault(); act('missed'); return; }
+    if (key === 'v' && canMazelTov(current())) { e.preventDefault(); act('mazel-tov'); return; }
     if (key === 'pagedown' || key === 'pageup' || key === 'arrowdown' || key === 'arrowup') {
       // Scroll whichever pane still has somewhere to go in that direction: a long
       // question first (it sits above the detail), then the detail pane.

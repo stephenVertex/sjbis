@@ -257,17 +257,28 @@
     assert(text('#c-missed').includes('No missed asks.'), 'dismissed item stays hidden after reload');
     key('Escape');
     assert(question() === 'Ship the release?', 'returning from missed preserves the open queue');
+    const previousAnswerCount = h.answers.length;
+    key('v');
+    assert(!button('mazel-tov') && h.answers.length === previousAnswerCount, 'the personal action is confined to milestones');
 
     const milestone = ask('c-celebrate', 9, { question: 'v2.4 shipped', question_type: 'celebrate' });
     h.sources.at(-1).emit({ event: 'notification_created', notification: milestone });
     key('k');
     assert(question() === milestone.question && text('#c-card .milestone') === 'Milestone', 'milestone is marked in the console');
     const celebration = $('#c-card .celebration-art');
-    assert(celebration && celebration.getBoundingClientRect().height > 100 && celebration.querySelectorAll('.confetti').length > 12,
-      'milestone fills the card with font-independent confetti artwork');
+    assert(celebration && celebration.getBoundingClientRect().height > 100 && celebration.querySelectorAll('.firework').length === 5,
+      'milestone fills the card with five font-independent fireworks');
     assert(text('button[data-act="yes"]').includes('Celebrate'), 'milestone has a Celebrate action');
-    key('y');
-    await waitFor(() => h.answers.some((a) => a.id === milestone.id && a.body.answer === 'Celebrate'), 'celebrate posts an acknowledgment');
+    const personal = new URLSearchParams(window.location.search).get('mazel-tov') === '1';
+    assert(Boolean(button('mazel-tov')) === personal, 'the personal action requires kiosk opt-in');
+    if (!personal) {
+      key('v');
+      window.SjbisConsole.act('mazel-tov');
+      assert(h.answers.length === previousAnswerCount, 'the personal action is blocked on a default console');
+    }
+    key(personal ? 'v' : 'y');
+    await waitFor(() => h.answers.some((a) => a.id === milestone.id && a.body.answer === (personal ? 'Mazel tov' : 'Celebrate')),
+      'the selected celebration posts an acknowledgment');
 
     assert(window.__xss === undefined, 'no injected script ran');
     assert(h.uncaught.length === 0, `no uncaught errors ${h.uncaught.join(';')}`);
