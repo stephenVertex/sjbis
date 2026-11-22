@@ -59,11 +59,11 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .mazel-tov-gables span::before { content: ""; position: absolute; inset: 0.35vh; clip-path: var(--gable); background: #19365a; }
 .mazel-tov-gables span::after { content: ""; position: absolute; left: 38%; bottom: 15%; width: 24%; height: 33%;
   border: 0.15vh solid currentColor; border-radius: 45% 45% 0 0; background: #0d1e3d; }
-.mazel-tov-emblem { position: absolute; width: min(11vh, 10vw); aspect-ratio: 0.87; top: 50%; color: #e5be78; transform: translateY(-50%); }
+.mazel-tov-emblem { position: absolute; width: min(11vh, 10vw); aspect-ratio: 0.8660254; top: 50%; color: #e5be78; transform: translateY(-50%); }
 .mazel-tov-emblem.left { left: 12%; }
 .mazel-tov-emblem.right { right: 12%; }
 .mazel-tov-emblem::before, .mazel-tov-emblem::after { content: ""; position: absolute; inset: 0;
-  background: currentColor; clip-path: polygon(evenodd, 50% 5%, 98% 72.5%, 2% 72.5%, 50% 5%, 50% 14%, 10% 68%, 90% 68%, 50% 14%); }
+  background: currentColor; clip-path: polygon(evenodd, 50% 4%, 96% 73%, 4% 73%, 50% 4%, 50% 12%, 12% 69%, 88% 69%, 50% 12%); }
 .mazel-tov-emblem::after { transform: rotate(180deg); }
 .mazel-tov-art.compact .mazel-tov-lockup { gap: 0.8vh; }
 .mazel-tov-art.compact .mazel-tov-gables { width: min(21vh, 24vw); height: 7vh; }
