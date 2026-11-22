@@ -22,6 +22,7 @@
       { key: 'ok', question: 'Fine?', shape: 'yesno' }, { key: 'count', question: 'How many?', shape: 'numeric', min: 1, max: 9, default: 3 }] }),
     ask('p-ack', 7, { question: 'Backup finished', question_type: 'ack' }),
   ];
+  let missed = [];
 
   const h = { answers: [], grants: [], registers: [], snoozes: [], dismisses: [], passes: [], uncaught: [], sources: [], grantFailOnce: false };
   window.__phoneRegression = h;
@@ -38,7 +39,7 @@
     const url = String(input && input.url ? input.url : input);
     const method = (init && init.method) || 'GET';
     const body = init && init.body ? JSON.parse(init.body) : null;
-    if (url.startsWith('/list')) return json(asks);
+    if (url.startsWith('/list')) return json(asks.concat(missed));
     if (url.startsWith('/signers')) return json(pinned ? [{ id: 'phone@iphone', method: 'software', pubkey: pinned }] : []);
     if (url.startsWith('/push/vapid')) return json({ enabled: true, public_key: 'BPtestkey', subject: 'mailto:t@t' });
     if (url === '/push/register' && method === 'POST') { h.registers.push(body); pinned = body.pubkey; return json({ ok: true, device_id: body.device_id, enrolled: true, push: !!body.subscription }); }
@@ -52,7 +53,12 @@
     m = url.match(/^\/snooze\/([^/?]+)$/);
     if (m && method === 'POST') { h.snoozes.push({ id: decodeURIComponent(m[1]), body }); return json({ id: m[1], status: 'open' }); }
     m = url.match(/^\/dismiss\/([^/?]+)$/);
-    if (m && method === 'POST') { h.dismisses.push(decodeURIComponent(m[1])); return json({ id: m[1] }); }
+    if (m && method === 'POST') {
+      const id = decodeURIComponent(m[1]);
+      missed = missed.filter((item) => item.id !== id);
+      h.dismisses.push(id);
+      return json({ id });
+    }
     m = url.match(/^\/notification\/([^/?]+)$/);
     if (m) return json({ id: decodeURIComponent(m[1]), question: 'Old one', status: 'answered', answer_label: 'Yes', question_type: 'yesno' });
     return json({ error: `unexpected ${method} ${url}` }, 500);
@@ -261,6 +267,16 @@
     await waitFor(() => S().view === 'list' && S().closed, 'closed elsewhere returns to the list with a notice');
     assert(/no longer open/.test(text('.lock.warn')) && /console/.test(text('.lock.warn')), 'notice names who answered');
     click(button('closed-ok'));
+
+    missed = [ask('p-expired', 9, { question: 'Missed deployment?', status: 'timed_out', timed_out_at: '2026-10-23T10:19:00Z' })];
+    h.sources[0].emit({ event: 'notification_timed_out', notification: missed[0] });
+    await waitFor(() => $('.card.missed'), 'missed ask appears after timeout');
+    assert(text('.card.missed').includes('Missed deployment?') && text('.card.missed').includes('expired'), 'missed card shows question and expiry');
+    click(button('dismiss-missed'));
+    await waitFor(() => !$('.card.missed'), 'missed card clears after dismissal');
+    assert(h.dismisses.includes('p-expired'), 'missed dismissal is saved on the daemon');
+    await P().load();
+    assert(!$('.card.missed'), 'dismissed item stays hidden after reload');
 
     // opening an id that is already answered (push tap on an old banner)
     await P().open('p-gone');

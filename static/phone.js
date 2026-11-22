@@ -19,7 +19,7 @@
     queue: [], view: 'list', cur: null, sel: null, ttlIdx: 1, once: false, busy: false, msg: '', msgCls: '', msgAt: 0,
     conn: 'connecting', dev: null, enrolled: null, signers: null, grant: null, closed: null,
     push: { supported: false, permission: 'default', subscribed: false, standalone: false, vapid: null, enabled: null },
-    formIdx: 0, formAnswers: {}, num: 0, dismissArm: null, dismissArmUntil: 0, noteOpen: false,
+    formIdx: 0, formAnswers: {}, num: 0, dismissArm: null, dismissArmUntil: 0, noteOpen: false, missed: [],
   };
   var root = document.getElementById('phone');
   if (!root) { root = document.createElement('div'); root.id = 'phone'; document.body.appendChild(root); }
@@ -183,9 +183,13 @@
   function post(url, body) {
     return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }).then(readJson);
   }
+  var loadGeneration = 0;
   function load() {
-    return fetch(BASE + '/list', { cache: 'no-store' }).then(readJson).then(function (list) {
-      S.queue = Array.isArray(list) ? list : [];
+    var generation = ++loadGeneration;
+    return fetch(BASE + '/list?include_missed=true', { cache: 'no-store' }).then(readJson).then(function (list) {
+      if (generation !== loadGeneration) return;
+      S.missed = list.filter(function (n) { return n.status === 'timed_out'; });
+      S.queue = list.filter(function (n) { return n.status !== 'timed_out'; });
       normalize(); render();
     }).catch(function (e) { setMsg('load failed: ' + e.message, 'bad'); render(); });
   }
@@ -219,6 +223,8 @@
       var ev;
       try { ev = JSON.parse(e.data); } catch (_) { return; }
       if (ev.event === 'notification_created' || ev.event === 'notification_updated') upsert(ev.notification);
+      else if (ev.event === 'notification_timed_out') load();
+      else if (ev.event === 'notification_missed_dismissed') { closeBanners(ev.id); load(); }
       else if (ev.event === 'notification_answered') closedElsewhere(ev.envelope && ev.envelope.id, ev.envelope);
       else if (ev.event === 'notification_cancelled' || ev.event === 'notification_dismissed') closedElsewhere(ev.id, null);
     };
@@ -252,6 +258,11 @@
     if (S.cur === id) { S.cur = null; if (S.view === 'ask') S.view = 'list'; }
     render();
   }
+  function removeMissed(id) {
+    ++loadGeneration;
+    S.missed = S.missed.filter(function (n) { return n.id !== id; });
+    render();
+  }
   // Answered, cancelled or dismissed somewhere else while we were looking at it.
   function closedElsewhere(id, envelope) {
     if (!id) return;
@@ -276,7 +287,9 @@
       // Not in the open list (maybe already answered): fetch it to say so.
       return fetch(BASE + '/notification/' + encodeURIComponent(id), { cache: 'no-store' }).then(readJson).then(function (full) {
         if (live(full, Date.now())) { upsert(full); return open(id); }
-        S.closed = { id: id, question: full.question || '', what: full.status === 'answered' ? 'answered: ' + (full.answer_label || full.answer || '') : full.status || 'closed' };
+        var what = full.status === 'timed_out' ? 'expired' : full.status || 'closed';
+        if (full.status === 'answered') what = 'answered: ' + (full.answer_label || full.answer || '');
+        S.closed = { id: id, question: full.question || '', what: what };
         S.view = 'list'; render();
       }).catch(function (e) { setMsg(id + ': ' + e.message, 'bad'); S.view = 'list'; render(); });
     }
@@ -497,6 +510,15 @@
           + '<div class="q">' + esc(n.question) + '</div></button>');
       });
     }
+    if (S.missed.length) {
+      h.push('<h2 class="section">Missed while away (' + S.missed.length + ')</h2>');
+      S.missed.forEach(function (n) {
+        h.push('<article class="card missed"><div class="meta"><b>' + esc(n.agent_name) + '</b></div>'
+          + '<div class="q">' + esc(n.question) + '</div><div class="meta">'
+          + (n.timed_out_at ? 'expired ' + esc(new Date(n.timed_out_at).toLocaleString()) : 'expiry time unavailable') + '</div>'
+          + btn('dismiss-missed', 'dismiss', 'ghost', S.busy, n.id) + '</article>');
+      });
+    }
     h.push('</div>');
     return h.join('');
   }
@@ -658,6 +680,9 @@
     var a = b.getAttribute('data-act'), arg = b.getAttribute('data-arg');
     if (a === 'grant-ok') { S.grant = null; return render(); }
     if (a === 'closed-ok') { S.closed = null; return render(); }
+    if (a === 'dismiss-missed') {
+      return run(post(BASE + '/dismiss/' + encodeURIComponent(arg)).then(function () { removeMissed(arg); closeBanners(arg); }), 'dismissed');
+    }
     if (a === 'enable-push') return enablePush();
     if (a === 'test-push') return testPush();
     if (a === 'register') return run(register(null), 'registered');

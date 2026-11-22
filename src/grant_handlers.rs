@@ -70,12 +70,7 @@ pub async fn post_grant(
                 .map_err(db_err)?
                 .map_err(grant_err)?;
             let envelope = grant_answer_envelope(&notif, record, &verified.envelope, now);
-            {
-                let mut waiters = state.waiters.lock().await;
-                if let Some(tx) = waiters.remove(&notif.id) {
-                    let _ = tx.send(envelope.clone());
-                }
-            }
+            crate::handlers::notify_waiters(&state, &envelope).await;
             state
                 .broadcaster
                 .broadcast(&SseEvent::NotificationAnswered {

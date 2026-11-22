@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class SjbisStore: ObservableObject {
     @Published var notifications: [SjbisNotification] = []
+    @Published var missed: [SjbisNotification] = []
     @Published var history: [SjbisNotification] = []
     @Published var agents: [String: Agent] = [:]
     @Published var rules: [Rule] = []
@@ -14,10 +15,18 @@ final class SjbisStore: ObservableObject {
     private var sseTask: Task<Void, Never>?
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    private var refreshGeneration = 0
 
     init() {
         decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let timestamp = try container.decode(String.self)
+            if let date = try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(timestamp) {
+                return date
+            }
+            return try Date.ISO8601FormatStyle().parse(timestamp)
+        }
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
     }
@@ -28,10 +37,14 @@ final class SjbisStore: ObservableObject {
 
     func refresh() async {
         guard let url = URL(string: "\(daemonURL)/state") else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
+            guard !Task.isCancelled, generation == refreshGeneration else { return }
             let state = try decoder.decode(DashboardState.self, from: data)
             notifications = state.notifications.sorted { $0.urgency > $1.urgency }
+            missed = state.missed ?? []
             history = state.history
             agents = state.agents
             rules = state.rules
@@ -39,6 +52,19 @@ final class SjbisStore: ObservableObject {
             connectionError = nil
         } catch {
             connectionError = error.localizedDescription
+        }
+    }
+
+    func fetchNotification(_ id: String) async -> SjbisNotification? {
+        guard let base = URL(string: daemonURL) else { return nil }
+        let url = base.appendingPathComponent("notification").appendingPathComponent(id)
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            return try decoder.decode(SjbisNotification.self, from: data)
+        } catch {
+            connectionError = error.localizedDescription
+            return nil
         }
     }
 
@@ -64,6 +90,7 @@ final class SjbisStore: ObservableObject {
                     throw URLError(.badServerResponse)
                 }
                 await MainActor.run { isConnected = true; connectionError = nil }
+                await refresh()
                 for try await line in bytes.lines {
                     if Task.isCancelled { break }
                     if line.hasPrefix("data:") {
@@ -96,6 +123,8 @@ final class SjbisStore: ObservableObject {
                     notifications[idx] = n
                 }
             }
+        case "notification_timed_out", "notification_missed_dismissed":
+            Task { await refresh() }
         case "notification_answered", "notification_dismissed":
             if let env = event.envelope {
                 if let idx = notifications.firstIndex(where: { $0.id == env.id }) {
@@ -148,13 +177,14 @@ final class SjbisStore: ObservableObject {
         guard let url = URL(string: "\(daemonURL)/dismiss/\(id)") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        _ = try? await URLSession.shared.data(for: request)
-        if let idx = notifications.firstIndex(where: { $0.id == id }) {
-            var n = notifications[idx]
-            n.status = .dismissed
-            n.answered_at = Date()
-            history.insert(n, at: 0)
-            notifications.remove(at: idx)
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            refreshGeneration += 1
+            missed.removeAll { $0.id == id }
+            notifications.removeAll { $0.id == id }
+        } catch {
+            connectionError = error.localizedDescription
         }
     }
 

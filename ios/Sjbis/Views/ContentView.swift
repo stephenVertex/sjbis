@@ -2,12 +2,16 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var store: SjbisStore
+    @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var push = PushNotifications.shared
+    @ObservedObject private var settings = AppSettings.shared
     @State private var showingSettings = false
     @State private var selectedTab = 0
+    @State private var queuePath: [SjbisNotification] = []
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack {
+            NavigationStack(path: $queuePath) {
                 NotificationListView()
                     .navigationTitle("SJBIS")
                     .navigationBarTitleDisplayMode(.inline)
@@ -41,8 +45,25 @@ struct ContentView: View {
         .sheet(isPresented: $showingSettings) {
             SettingsView()
         }
-        .task {
-            await store.refresh()
+        .task(id: scenePhase) {
+            if scenePhase == .active {
+                push.syncRegistration()
+                store.startSSE()
+            } else {
+                store.stopSSE()
+            }
+        }
+        .task(id: push.openedID) {
+            guard let id = push.openedID else { return }
+            if let notification = await store.fetchNotification(id), !Task.isCancelled {
+                showingSettings = false
+                selectedTab = 0
+                queuePath = [notification]
+            }
+            push.clearOpenedID(id)
+        }
+        .onChange(of: settings.daemonURL) {
+            push.syncRegistration()
             store.startSSE()
         }
         .onDisappear { store.stopSSE() }

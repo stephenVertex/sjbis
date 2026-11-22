@@ -11,6 +11,7 @@ enum QuestionType: String, Codable, CaseIterable {
     case picklist
     case schedule
     case form
+    case approval
 }
 
 enum NotificationStatus: String, Codable {
@@ -120,6 +121,7 @@ struct SjbisNotification: Codable, Identifiable, Hashable {
     var deadline: Date?
     var status: NotificationStatus
     var created_at: Date
+    var timed_out_at: Date?
     var answered_at: Date?
     var answer: String?
     var answer_label: String?
@@ -164,6 +166,7 @@ struct Rule: Codable, Identifiable, Hashable {
 
 struct DashboardState: Codable {
     var notifications: [SjbisNotification]
+    var missed: [SjbisNotification]?
     var history: [SjbisNotification]
     var rules: [Rule]
     var agents: [String: Agent]

@@ -15,7 +15,7 @@ pub struct Cli {
 pub enum Commands {
     /// Post a new question to the surfacer
     Ask(AskArgs),
-    /// List open notifications
+    /// List open and undismissed missed notifications
     List {
         /// Output as JSON
         #[arg(long)]

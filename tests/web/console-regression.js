@@ -26,6 +26,7 @@
     ask('c-appr', 3, { question: 'Rotate the key?', question_type: 'approval', ttl_secs: 600 }),
     ask('c-ack', 4, { question: 'Backup finished', question_type: 'ack' }),
   ];
+  let missed = [];
 
   const h = { answers: [], approvals: [], snoozes: [], dismisses: [], passes: [], uncaught: [],
     healthUp: false, approveFail: false, sources: [] };
@@ -48,13 +49,18 @@
       const exp = new Date(Date.now() + body.ttl_secs * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
       return json({ id: body.decision === 'deny' ? 'ta-deny01' : 'ta-abc123', expires_at: exp, decision: body.decision });
     }
-    if (url.startsWith('/list')) return json(asks);
+    if (url.startsWith('/list')) return json(asks.concat(missed));
     let m = url.match(/^\/answer\/([^/?]+)$/);
     if (m && method === 'POST') { h.answers.push({ id: decodeURIComponent(m[1]), body }); return json({ id: m[1] }); }
     m = url.match(/^\/snooze\/([^/?]+)$/);
     if (m && method === 'POST') { h.snoozes.push({ id: decodeURIComponent(m[1]), body }); return json({ id: m[1], status: 'open' }); }
     m = url.match(/^\/dismiss\/([^/?]+)$/);
-    if (m && method === 'POST') { h.dismisses.push(decodeURIComponent(m[1])); return json({ id: m[1] }); }
+    if (m && method === 'POST') {
+      const id = decodeURIComponent(m[1]);
+      missed = missed.filter((item) => item.id !== id);
+      h.dismisses.push(id);
+      return json({ id });
+    }
     return json({ error: `unexpected ${method} ${url}` }, 500);
   };
   window.EventSource = class FixtureEventSource {
@@ -238,6 +244,19 @@
     assert(text('#c-hdr').includes('reconnecting'), 'SSE error shows reconnecting');
     await waitFor(() => h.sources.length >= 2 && text('#c-hdr').includes('live'), 'SSE reconnects', 4000);
     await waitFor(() => question() === 'Ship the release?' && text('#c-pos') === '1 of 5', 'reconnect re-GETs /list');
+
+    missed = [ask('c-expired', 9, { question: 'Missed deployment?', status: 'timed_out', timed_out_at: '2026-10-23T10:19:00Z' })];
+    h.sources.at(-1).emit({ event: 'notification_timed_out', notification: missed[0] });
+    await waitFor(() => button('missed'), 'missed count updates after a timeout');
+    key('h');
+    assert(text('#c-missed').includes('Missed deployment?') && text('#c-missed').includes('expired'), 'missed view shows the question and expiry');
+    button('dismiss-missed').click();
+    await waitFor(() => text('#c-missed').includes('No missed asks.'), 'missed item clears after dismissal');
+    assert(h.dismisses.includes('c-expired'), 'missed dismissal is saved on the daemon');
+    await window.SjbisConsole.load();
+    assert(text('#c-missed').includes('No missed asks.'), 'dismissed item stays hidden after reload');
+    key('Escape');
+    assert(question() === 'Ship the release?', 'returning from missed preserves the open queue');
 
     assert(window.__xss === undefined, 'no injected script ran');
     assert(h.uncaught.length === 0, `no uncaught errors ${h.uncaught.join(';')}`);

@@ -29,6 +29,7 @@
 
   var S = {
     queue: [], cur: null, sel: null, ttlIdx: 1, busy: false, msg: '', msgCls: '',
+    missed: [], showMissed: false,
     conn: 'connecting', sidecarUp: false, signer: '', sidecarWhy: 'checking…', grant: null,
   };
   var root = document.getElementById('console');
@@ -197,9 +198,13 @@
   function post(url, body) {
     return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }).then(readJson);
   }
+  var loadGeneration = 0;
   function load() {
-    return fetch(BASE + '/list', { cache: 'no-store' }).then(readJson).then(function (list) {
-      S.queue = Array.isArray(list) ? list : [];
+    var generation = ++loadGeneration;
+    return fetch(BASE + '/list?include_missed=true', { cache: 'no-store' }).then(readJson).then(function (list) {
+      if (generation !== loadGeneration) return;
+      S.missed = list.filter(function (n) { return n.status === 'timed_out'; });
+      S.queue = list.filter(function (n) { return n.status !== 'timed_out'; });
       normalize(); render();
     }).catch(function (e) { setMsg('load failed: ' + e.message, 'bad'); render(); });
   }
@@ -216,6 +221,8 @@
       var ev;
       try { ev = JSON.parse(e.data); } catch (_) { return; }
       if (ev.event === 'notification_created' || ev.event === 'notification_updated') upsert(ev.notification);
+      else if (ev.event === 'notification_timed_out') load();
+      else if (ev.event === 'notification_missed_dismissed') load();
       else if (ev.event === 'notification_answered') removeAsk(ev.envelope && ev.envelope.id);
       else if (ev.event === 'notification_cancelled' || ev.event === 'notification_dismissed') removeAsk(ev.id);
     };
@@ -264,9 +271,23 @@
     }));
   }
   function closeGrant() { clearTimeout(S.grantTimer); S.grant = null; render(); }
+  function removeMissed(id) {
+    ++loadGeneration;
+    S.missed = S.missed.filter(function (n) { return n.id !== id; });
+    render();
+  }
   function act(name, arg) {
     var n = current();
     if (name !== 'dismiss' && S.dismissArm != null) disarmDismiss(true); // any other action cancels a pending dismiss
+    if (name === 'missed') {
+      S.showMissed = !S.showMissed; setMsg(''); render();
+      var target = document.querySelector(S.showMissed ? '#c-missed' : '#c-tools [data-act="missed"]');
+      if (target) target.focus();
+      return;
+    }
+    if (name === 'dismiss-missed' && !S.busy) {
+      return run(post(BASE + '/dismiss/' + encodeURIComponent(arg)).then(function () { removeMissed(arg); }), 'dismissed');
+    }
     if (name === 'prev') return step(-1);
     if (name === 'next') return step(1);
     if (name === 'reload') { setMsg(''); checkSidecar(); if (!es) connect(); return load(); }
@@ -335,8 +356,8 @@
 
   // ── render ─────────────────────────────────────────────────────────────
   function btn(act, key, label, cls, disabled, arg) {
-    return '<button type="button" data-act="' + act + '"' + (arg != null ? ' data-arg="' + arg + '"' : '')
-      + ' class="' + (cls || '') + '"' + (disabled ? ' disabled' : '') + '><kbd>' + esc(key) + '</kbd><span class="lbl">'
+    return '<button type="button" data-act="' + act + '"' + (arg != null ? ' data-arg="' + esc(arg) + '"' : '')
+      + ' class="' + (cls || '') + '"' + (disabled ? ' disabled' : '') + '>' + (key ? '<kbd>' + esc(key) + '</kbd>' : '') + '<span class="lbl">'
       + esc(label) + '</span></button>';
   }
   function renderHeader(n) {
@@ -409,6 +430,23 @@
   function render() {
     var n = current();
     renderHeader(n);
+    if (S.showMissed) {
+      var card = $('c-card'), oldList = $('c-missed'), scroll = oldList ? oldList.scrollTop : 0;
+      var missed = S.missed.map(function (ask) {
+        return '<article><div class="meta"><b>' + esc(ask.agent_name) + '</b> · '
+          + (ask.timed_out_at ? 'expired ' + esc(new Date(ask.timed_out_at).toLocaleString()) : 'expiry time unavailable')
+          + '</div><p>' + esc(ask.question) + '</p>'
+          + btn('dismiss-missed', '', 'dismiss', '', S.busy, ask.id) + '</article>';
+      });
+      card.innerHTML = '<h2 class="missed-heading">Missed while away</h2>'
+        + '<div id="c-missed" class="missed" tabindex="0">' + (missed.join('') || '<p>No missed asks.</p>') + '</div>'
+        + '<div class="msg ' + S.msgCls + '">' + esc(S.msg) + '</div>';
+      delete card.dataset.id;
+      $('c-missed').scrollTop = scroll;
+      $('c-noterow').hidden = true;
+      $('c-tools').innerHTML = btn('missed', 'H', 'back to open asks');
+      return;
+    }
     renderCard(n);
     $('c-noterow').hidden = !n;
     var u = n && unit(n);
@@ -416,7 +454,7 @@
       : isNumeric(u) ? 'M: type a number (' + numRange(u) + '), Enter sends, Esc leaves' : 'M: optional note, Esc leaves';
     $('c-tools').innerHTML = [btn('prev', '←/K', 'prev'), btn('next', '→/J', 'next'), btn('note', 'M', 'note', '', !n),
       btn('snooze', 'S', 'snooze ' + SNOOZE_MINUTES + 'm', '', !n || S.busy), btn('dismiss', 'D', n && S.dismissArm === n.id ? 'dismiss?' : 'dismiss', n && S.dismissArm === n.id ? 'arm' : '', !n || S.busy),
-      btn('reload', 'R', 'reload')].join('');
+      S.missed.length ? btn('missed', 'H', 'missed (' + S.missed.length + ')', 'warn') : '', btn('reload', 'R', 'reload')].join('');
     var g = S.grant;
     $('c-overlay').innerHTML = !g ? '' : '<div class="grant ' + (g.decision === 'deny' ? 'deny' : '') + '" id="c-grant">'
       + '<div class="sub">' + (g.decision === 'deny' ? 'denied' : 'approved') + '</div><div class="gid">' + esc(g.id) + '</div>'
@@ -451,6 +489,10 @@
       else if (/^Key[A-Z]$/.test(c)) key = c.slice(3).toLowerCase();
     }
     if (S.grant) { e.preventDefault(); closeGrant(); return; }
+    if (S.showMissed) {
+      if (key === 'escape' || key === 'h') { e.preventDefault(); act('missed'); }
+      return;
+    }
     if (hard && e.target === noteEl) noteEl.blur();
     if (e.target === noteEl) {
       if (key === 'escape') { noteEl.blur(); e.preventDefault(); }
@@ -462,6 +504,7 @@
       }
       return;
     }
+    if (key === 'h' && S.missed.length) { e.preventDefault(); act('missed'); return; }
     if (key === 'pagedown' || key === 'pageup' || key === 'arrowdown' || key === 'arrowup') {
       // Scroll whichever pane still has somewhere to go in that direction: a long
       // question first (it sits above the detail), then the detail pane.
@@ -486,6 +529,7 @@
     if (!b || b.disabled) return;
     if (S.grant) return closeGrant();
     var a = b.getAttribute('data-act'), arg = b.getAttribute('data-arg');
+    if (a === 'dismiss-missed') return act(a, arg);
     if (a === 'pick' && Number(arg) === S.sel) return act('confirm');
     act(a, arg == null ? undefined : Number(arg));
   });

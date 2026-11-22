@@ -7,6 +7,14 @@ struct NotificationDetailView: View {
     @State private var showNote = false
     @State private var note = ""
 
+    private var status: NotificationStatus {
+        let current = store.missed.first { $0.id == notif.id }
+            ?? store.history.first { $0.id == notif.id }
+            ?? notif
+        if current.status == .open, let deadline = current.deadline, deadline <= Date() { return .timed_out }
+        return current.status
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -26,10 +34,17 @@ struct NotificationDetailView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                Divider()
-                renderer
-                Divider()
-                noteSection
+                if status == .open {
+                    Divider()
+                    renderer
+                    if notif.question_type != .approval {
+                        Divider()
+                        noteSection
+                    }
+                } else {
+                    Text(status == .timed_out ? "This ask expired." : "This ask is closed.")
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding()
         }
@@ -37,14 +52,16 @@ struct NotificationDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("Snooze 5 min") { Task { await store.snooze(notif.id, minutes: 5) } }
-                    Button("Snooze 15 min") { Task { await store.snooze(notif.id, minutes: 15) } }
-                    Button("Snooze 30 min") { Task { await store.snooze(notif.id, minutes: 30) } }
-                    Divider()
-                    Button("Dismiss", role: .destructive) { Task { await store.dismiss(notif.id); dismiss() } }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+                if status == .open {
+                    Menu {
+                        Button("Snooze 5 min") { Task { await store.snooze(notif.id, minutes: 5) } }
+                        Button("Snooze 15 min") { Task { await store.snooze(notif.id, minutes: 15) } }
+                        Button("Snooze 30 min") { Task { await store.snooze(notif.id, minutes: 30) } }
+                        Divider()
+                        Button("Dismiss", role: .destructive, action: doDismiss)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
                 }
             }
         }
@@ -130,6 +147,9 @@ struct NotificationDetailView: View {
             FormRenderer(notif: notif, onAnswer: doAnswer)
         case .file:
             FileRenderer(notif: notif, onAnswer: doAnswer)
+        case .approval:
+            Text("Sign this request on the phone web app or console.")
+                .foregroundStyle(.secondary)
         }
     }
 }

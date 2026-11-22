@@ -28,8 +28,7 @@ targets:
     entitlements:
       path: Sjbis/Sjbis.entitlements
       properties:
-        com.apple.developer.push-notifications: true
-        com.apple.developer.aps-environment: development
+        aps-environment: development
     settings:
       base:
         INFOPLIST_FILE: Sjbis/Info.plist

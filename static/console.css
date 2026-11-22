@@ -68,3 +68,8 @@ button:disabled { opacity: 0.35; cursor: default; }
 .grant .sub { font-size: 5vh; }
 .grant .hint { font-size: 3vh; color: var(--dim); }
 .empty .ok { color: var(--ok); } .empty .warn { color: var(--warn); }
+.missed-heading { margin: 0; font-size: 4vh; }
+.missed { flex: 1; min-height: 0; overflow: auto; font-size: 3.4vh; }
+.missed article { padding: 1.5vh 0; border-bottom: 1px solid var(--line); }
+.missed article p { margin: 0.8vh 0; overflow-wrap: anywhere; }
+.missed button { min-height: 6vh; font-size: 3vh; }

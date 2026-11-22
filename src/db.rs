@@ -13,7 +13,7 @@ pub struct Db {
 
 // Explicit column list to avoid PostgreSQL "cached plan must not change result type"
 // errors when columns are added via migrations.
-const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note, sub_questions, ttl_secs, renews, once";
+const NOTIF_COLS: &str = "id, agent_name, instance, sender, src, question, detail, detail_markdown, question_type, urgency, blocking, deadline, reply_to, status, created_at, timed_out_at, missed_dismissed_at, answered_at, answer, answer_label, choices, yes_label, no_label, placeholder, suggestions, min, max, step, default_value, unit, accept, diff, ack_label, items, slots, mute_key, caller_id, snooze_until, note, sub_questions, ttl_secs, renews, once";
 
 const GRANT_COLS: &str = "id, kind, notification_id, record, record_sha256, sig, signer, issued_at, expires_at, renews, revoked_by, claimed_by, claimed_at, created_at";
 
@@ -75,7 +75,7 @@ impl Db {
         .bind(n.blocking)
         .bind(deadline)
         .bind(reply_to)
-        .bind(format!("{:?}", n.status).to_lowercase())
+        .bind(n.status.as_str())
         .bind(created_at)
         .bind(answered_at)
         .bind(&n.answer)
@@ -136,17 +136,20 @@ impl Db {
         }
     }
 
-    pub async fn list_open_notifications(&self) -> Result<Vec<Notification>> {
-        let now = Utc::now();
-        let rows = sqlx::query(
-            &format!("SELECT {} FROM notifications WHERE status = 'open' AND (snooze_until IS NULL OR snooze_until <= $1) AND (deadline IS NULL OR deadline > $1) ORDER BY urgency DESC, created_at DESC", NOTIF_COLS),
-        )
-        .bind(now)
+    pub async fn list_notifications(&self, include_missed: bool) -> Result<Vec<Notification>> {
+        let rows = sqlx::query(&format!(
+            "SELECT {NOTIF_COLS} FROM notifications
+             WHERE (status = 'open' AND (snooze_until IS NULL OR snooze_until <= $1)
+                    AND (deadline IS NULL OR deadline > $1))
+                OR ($2 AND status = 'timed_out' AND missed_dismissed_at IS NULL)
+             ORDER BY (status = 'open') DESC, CASE WHEN status = 'open' THEN urgency END DESC,
+                      COALESCE(timed_out_at, created_at) DESC, id"
+        ))
+        .bind(Utc::now())
+        .bind(include_missed)
         .fetch_all(&self.pool)
         .await?;
-        rows.iter()
-            .map(|r| Self::row_to_notification(r))
-            .collect::<Result<Vec<_>>>()
+        rows.iter().map(Self::row_to_notification).collect()
     }
 
     pub async fn snooze_notification(&self, id: &str, minutes: i64) -> Result<Option<Notification>> {
@@ -167,7 +170,7 @@ impl Db {
 
     pub async fn list_history(&self, limit: usize) -> Result<Vec<Notification>> {
         let rows = sqlx::query(
-            &format!("SELECT {} FROM notifications WHERE status IN ('answered', 'timed_out') ORDER BY answered_at DESC, created_at DESC LIMIT $1", NOTIF_COLS),
+            &format!("SELECT {NOTIF_COLS} FROM notifications WHERE status IN ('answered', 'timed_out') ORDER BY COALESCE(answered_at, timed_out_at, created_at) DESC, id LIMIT $1"),
         )
         .bind(limit as i64)
         .fetch_all(&self.pool)
@@ -177,13 +180,14 @@ impl Db {
             .collect::<Result<Vec<_>>>()
     }
 
-    pub async fn update_status(&self, id: &str, status: NotificationStatus) -> Result<()> {
-        sqlx::query("UPDATE notifications SET status = $1 WHERE id = $2")
-            .bind(format!("{:?}", status).to_lowercase())
+    pub async fn cancel_notification(&self, id: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE notifications SET status = 'cancelled' WHERE id = $1 AND status IN ('open', 'muted')"
+        )
             .bind(id)
             .execute(&self.pool)
             .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn answer_notification(
@@ -192,31 +196,41 @@ impl Db {
         answer: &str,
         answer_label: Option<&str>,
         note: Option<&str>,
-    ) -> Result<()> {
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE notifications SET status = 'answered', answer = $1, answer_label = $2, answered_at = $3, note = $4 WHERE id = $5",
-        )
+        caller_timeout: bool,
+    ) -> Result<Option<Notification>> {
+        let row = sqlx::query(&format!(
+            "UPDATE notifications
+             SET status = CASE WHEN status = 'open' THEN 'answered' ELSE status END,
+                 answer = $1, answer_label = $2, answered_at = clock_timestamp(), note = $3
+             WHERE id = $4 AND question_type <> 'approval'
+               AND ((status = 'open' AND (deadline IS NULL OR deadline > clock_timestamp()))
+                    OR ($5 AND status = 'timed_out' AND answered_at IS NULL))
+             RETURNING {NOTIF_COLS}"
+        ))
         .bind(answer)
         .bind(answer_label)
-        .bind(now)
         .bind(note)
         .bind(id)
-        .execute(&self.pool)
+        .bind(caller_timeout)
+        .fetch_optional(&self.pool)
         .await?;
-        Ok(())
+        row.as_ref().map(Self::row_to_notification).transpose()
     }
 
-    pub async fn dismiss_notification(&self, id: &str) -> Result<()> {
-        let now = Utc::now();
-        sqlx::query(
-            "UPDATE notifications SET status = 'dismissed', answered_at = $1 WHERE id = $2",
-        )
-        .bind(now)
+    pub async fn dismiss_notification(&self, id: &str) -> Result<Option<Notification>> {
+        let row = sqlx::query(&format!(
+            "UPDATE notifications
+             SET status = CASE WHEN status = 'open' THEN 'dismissed' ELSE status END,
+                 answered_at = CASE WHEN status = 'open' THEN clock_timestamp() ELSE answered_at END,
+                 missed_dismissed_at = CASE WHEN status = 'timed_out'
+                     THEN COALESCE(missed_dismissed_at, clock_timestamp()) END
+             WHERE id = $1 AND status IN ('open', 'timed_out')
+             RETURNING {NOTIF_COLS}"
+        ))
         .bind(id)
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
-        Ok(())
+        row.as_ref().map(Self::row_to_notification).transpose()
     }
 
     pub async fn delete_notification(&self, id: &str) -> Result<()> {
@@ -227,27 +241,19 @@ impl Db {
         Ok(())
     }
 
-    pub async fn timeout_notifications(&self) -> Result<Vec<Notification>> {
-        let now = Utc::now();
-        let rows = sqlx::query(
-            &format!("SELECT {} FROM notifications WHERE status = 'open' AND deadline IS NOT NULL AND deadline < $1", NOTIF_COLS),
-        )
-        .bind(now)
+    /// Expire passed deadlines and, if supplied, the ask whose blocking wait elapsed.
+    pub async fn timeout_notifications(&self, elapsed_wait: Option<&str>) -> Result<Vec<Notification>> {
+        let rows = sqlx::query(&format!(
+            "UPDATE notifications
+             SET status = 'timed_out', timed_out_at = LEAST(deadline, $1)
+             WHERE status = 'open' AND (deadline <= $1 OR id = $2)
+             RETURNING {NOTIF_COLS}"
+        ))
+        .bind(Utc::now())
+        .bind(elapsed_wait)
         .fetch_all(&self.pool)
         .await?;
-        let timed_out: Vec<Notification> = rows
-            .iter()
-            .map(|r| Self::row_to_notification(r))
-            .collect::<Result<Vec<_>>>()?;
-
-        sqlx::query(
-            "UPDATE notifications SET status = 'timed_out' WHERE status = 'open' AND deadline IS NOT NULL AND deadline < $1",
-        )
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(timed_out)
+        rows.iter().map(Self::row_to_notification).collect()
     }
 
     // ── Rules ──────────────────────────────────────────────────────────
@@ -553,6 +559,9 @@ impl Db {
             return Ok(Err(GrantError::NotificationNotFound(record.ask_id.clone())));
         };
         let mut notif = Self::row_to_notification(&row)?;
+        if notif.status == NotificationStatus::Open && notif.deadline.is_some_and(|deadline| deadline <= Utc::now()) {
+            notif.status = NotificationStatus::TimedOut;
+        }
         if let Err(e) = check_grant_for_notification(record, &notif) {
             return Ok(Err(e));
         }
@@ -757,6 +766,8 @@ impl Db {
                 _ => NotificationStatus::Open,
             },
             created_at,
+            timed_out_at: row.try_get("timed_out_at")?,
+            missed_dismissed_at: row.try_get("missed_dismissed_at")?,
             answered_at,
             answer: row.try_get("answer")?,
             answer_label: row.try_get("answer_label")?,

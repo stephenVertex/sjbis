@@ -6,12 +6,34 @@ struct NotificationListView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                if store.notifications.isEmpty {
+                if store.notifications.isEmpty && store.missed.isEmpty {
                     EmptyStateView(error: store.connectionError)
                 }
                 ForEach(store.notifications) { notif in
                     NavigationLink(value: notif) {
                         NotificationRowView(notif: notif)
+                    }
+                }
+                if !store.missed.isEmpty {
+                    Text("Missed while away")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(store.missed) { notif in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(notif.agent_name).font(.caption).foregroundStyle(.secondary)
+                            Text(notif.question)
+                            if let expired = notif.timed_out_at {
+                                Text("Expired \(expired.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("Expiry time unavailable").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Button("Dismiss") { Task { await store.dismiss(notif.id) } }
+                                .buttonStyle(.bordered)
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
                     }
                 }
             }

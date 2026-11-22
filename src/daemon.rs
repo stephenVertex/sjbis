@@ -193,16 +193,18 @@ pub async fn run_daemon(
     let router = api_key.map(AiRouter::new);
 
     // Initialize APNs client if configured
-    let apns = if let (Ok(key_path), Ok(team_id), Ok(key_id)) = (
+    let apns = if let (Ok(key_path), Ok(team_id), Ok(key_id), Ok(topic)) = (
         std::env::var("APNS_KEY_PATH"),
         std::env::var("APNS_TEAM_ID"),
         std::env::var("APNS_KEY_ID"),
+        std::env::var("APNS_TOPIC"),
     ) {
+        let environment = std::env::var("APNS_ENVIRONMENT").unwrap_or_else(|_| "production".to_string());
         match std::fs::read_to_string(&key_path) {
             Ok(pem) => {
-                match ApnsClient::new(&team_id, &key_id, &pem) {
+                match ApnsClient::new(&team_id, &key_id, &pem, &topic, &environment) {
                     Ok(client) => {
-                        tracing::info!("APNs push notifications enabled (team={}, key={})", team_id, key_id);
+                        tracing::info!(%topic, %environment, "APNs push notifications enabled");
                         Some(client)
                     }
                     Err(e) => {
@@ -217,7 +219,7 @@ pub async fn run_daemon(
             }
         }
     } else {
-        tracing::info!("APNs not configured (set APNS_KEY_PATH, APNS_TEAM_ID, APNS_KEY_ID to enable push)");
+        tracing::info!("APNs not configured (set APNS_KEY_PATH, APNS_TEAM_ID, APNS_KEY_ID, and APNS_TOPIC to enable push)");
         None
     };
 
@@ -245,7 +247,7 @@ pub async fn run_daemon(
     let app = build_app(api_routes(), Path::new("static"), &base_path)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
     tracing::info!(
@@ -256,7 +258,19 @@ pub async fn run_daemon(
     );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let expiry_worker = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            if let Err(error) = expire_notifications(&state, None).await {
+                tracing::warn!(%error, "could not expire notifications");
+            }
+        }
+    });
+    let result = axum::serve(listener, app).await;
+    expiry_worker.abort();
+    result?;
     Ok(())
 }
 
@@ -293,6 +307,54 @@ mod tests {
         let status = response.status();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "needs an isolated PostgreSQL DATABASE_URL"]
+    async fn missed_asks_remain_timed_out_after_dismissal(pool: sqlx::PgPool) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO notifications (id, agent_name, question, question_type, created_at, deadline)
+             VALUES ('deadline', 'fixture', 'Past deadline?', 'ack', now() - interval '2 min', now() - interval '1 min'),
+                    ('cap', 'fixture', 'Blocking cap?', 'approval', now() - interval '10 min', NULL),
+                    ('open', 'fixture', 'Still waiting?', 'ack', now(), NULL)"
+        ).execute(&pool).await?;
+        let state = AppState {
+            db: Db::from_pool(pool),
+            broadcaster: Broadcaster::new(),
+            router: Arc::new(None),
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            apns: Arc::new(Mutex::new(None)),
+            webpush: Arc::new(None),
+        };
+        expire_notifications(&state, Some("cap")).await?;
+        let app = api_routes().with_state(state);
+        let (status, body) = request(app.clone(), Method::GET, "/list?include_missed=true").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rows: Vec<Notification> = serde_json::from_str(&body)?;
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].id, "open");
+        for row in &rows[1..] {
+            assert_eq!(row.status, NotificationStatus::TimedOut);
+            assert!(row.timed_out_at.is_some());
+        }
+        let (status, body) = request(app.clone(), Method::GET, "/wait/cap").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let answer: AnswerEnvelope = serde_json::from_str(&body)?;
+        assert_eq!(answer.via, "timed_out");
+        assert!(answer.grant.is_none());
+
+        for _ in 0..2 {
+            let (status, body) = request(app.clone(), Method::POST, "/dismiss/cap").await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let (_, body) = request(app.clone(), Method::GET, "/notification/cap").await;
+        let notification: Notification = serde_json::from_str(&body)?;
+        assert_eq!(notification.status, NotificationStatus::TimedOut);
+        assert!(notification.missed_dismissed_at.is_some());
+        let (_, body) = request(app, Method::GET, "/list?include_missed=true").await;
+        let rows: Vec<Notification> = serde_json::from_str(&body)?;
+        assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["open", "deadline"]);
+        Ok(())
     }
 
     #[tokio::test]

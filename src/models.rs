@@ -199,6 +199,10 @@ pub struct Notification {
     pub status: NotificationStatus,
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub timed_out_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missed_dismissed_at: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub answered_at: Option<DateTime<Utc>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
@@ -271,6 +275,19 @@ pub enum NotificationStatus {
     Muted,
     TimedOut,
     Dismissed,
+}
+
+impl NotificationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Answered => "answered",
+            Self::Cancelled => "cancelled",
+            Self::Muted => "muted",
+            Self::TimedOut => "timed_out",
+            Self::Dismissed => "dismissed",
+        }
+    }
 }
 
 /// The envelope returned to a blocking caller or webhook
@@ -450,6 +467,8 @@ pub enum SseEvent {
     NotificationCreated { notification: Notification },
     NotificationUpdated { notification: Notification },
     NotificationAnswered { envelope: AnswerEnvelope },
+    NotificationTimedOut { notification: Notification },
+    NotificationMissedDismissed { id: NotificationId },
     NotificationCancelled { id: NotificationId },
     NotificationDismissed { id: NotificationId, envelope: AnswerEnvelope },
     RuleCreated { rule: Rule },
@@ -461,6 +480,7 @@ pub enum SseEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardState {
     pub notifications: Vec<Notification>,
+    pub missed: Vec<Notification>,
     pub history: Vec<Notification>,
     pub rules: Vec<Rule>,
     pub agents: HashMap<String, SourceSummary>,

@@ -487,7 +487,7 @@ async fn wait_for_answer(client: &reqwest::Client, url: &str, id: &str) -> Resul
 async fn cmd_list(json: bool) -> Result<()> {
     let url = cli::daemon_url(None);
     let client = reqwest::Client::new();
-    let resp = client.get(format!("{}/list", url)).send().await?;
+    let resp = client.get(format!("{}/list?include_missed=true", url)).send().await?;
     if !resp.status().is_success() {
         anyhow::bail!("daemon error: {}", resp.text().await.unwrap_or_default());
     }
@@ -496,10 +496,14 @@ async fn cmd_list(json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&notifs)?);
     } else {
         if notifs.is_empty() {
-            println!("No open notifications.");
+            println!("No open or missed notifications.");
         } else {
             for n in notifs {
-                println!("[{}] {} | {} | {}", n.id, n.urgency, n.agent_name, n.question);
+                if n.status == NotificationStatus::TimedOut {
+                    println!("[{}] timed_out | {} | {}", n.id, n.agent_name, n.question);
+                } else {
+                    println!("[{}] {} | {} | {}", n.id, n.urgency, n.agent_name, n.question);
+                }
             }
         }
     }
@@ -564,18 +568,13 @@ async fn cmd_status(id: String) -> Result<()> {
     let resp = client.get(format!("{}/notification/{}", url, id)).send().await?;
     if resp.status().is_success() {
         let notif: Notification = resp.json().await?;
-        let status_str = match notif.status {
-            NotificationStatus::Open => "open",
-            NotificationStatus::Answered => "answered",
-            NotificationStatus::Cancelled => "cancelled",
-            NotificationStatus::Muted => "muted",
-            NotificationStatus::TimedOut => "timed_out",
-            NotificationStatus::Dismissed => "dismissed",
-        };
         println!("id:        {}", notif.id);
-        println!("status:    {}", status_str);
+        println!("status:    {}", notif.status.as_str());
         println!("agent:     {}", notif.agent_name);
         println!("question:  {}", notif.question);
+        if let Some(at) = notif.timed_out_at {
+            println!("timed out: {}", at);
+        }
         if let Some(ref answer) = notif.answer {
             println!("answer:    {}", answer);
         }

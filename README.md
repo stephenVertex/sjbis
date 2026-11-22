@@ -401,6 +401,28 @@ Browser regression: `tests/web/phone-regression.html` (same serve-the-repo
 recipe as the console one; it signs a real envelope with WebCrypto and
 verifies it).
 
+## Native iPhone app
+
+The SwiftUI app in `ios/` shows the open queue and **Missed while away**.
+Tapping a native notification opens the associated ask. Signed approvals can
+be completed in the phone web app or console.
+
+For a development build on a physical iPhone, enable **Push Notifications**
+for the App ID matching `PRODUCT_BUNDLE_IDENTIFIER`, configure `ios/Local.xcconfig`,
+and install the app with `./scripts/ios-deploy.sh`. Set these variables on the
+SJBIS daemon service and restart it:
+
+| Variable | Value |
+|---|---|
+| `APNS_ENVIRONMENT` | `development` for an Xcode development build, `production` for a distribution build |
+| `APNS_TOPIC` | The app's exact bundle identifier |
+| `APNS_TEAM_ID` | Apple Developer Team ID |
+| `APNS_KEY_ID` | ID of the Apple push key for that environment |
+| `APNS_KEY_PATH` | Path to the `.p8` key on the daemon host |
+
+Open the app and allow notifications. Lock the iPhone, create a normal ask with
+urgency 2 or higher, and tap the banner to verify delivery and routing.
+
 ## Architecture
 
 ```
@@ -484,7 +506,7 @@ The `sjbis` binary is both the client (talks to the daemon) and the daemon itsel
 | `sjbis answer <id> --answer <v>` | Record an answer on behalf of the caller (e.g. an agent's auto-pick after a timeout). Supports `--via` and `--note`. |
 | `sjbis wait <id>` | Reattach to a posted question and block until it resolves. |
 | `sjbis status <id>` | Print a notification's state (open / answered / cancelled / muted / timed_out / dismissed). |
-| `sjbis list [--json]` | List open notifications. |
+| `sjbis list [--json]` | List open asks and undismissed timeouts. |
 | `sjbis cancel <id>` | Withdraw an unanswered question. |
 | `sjbis dismiss <id>` | Mark as seen without answering; no reply sent. |
 | `sjbis rule add\|allow\|list\|rm` | Manage filtering rules (see [API](#post-rules--create-filtering-rules)). |
@@ -793,6 +815,11 @@ curl -X POST http://localhost:7878/ask \
 For `--blocking` callers. Returns immediately if already answered/dismissed/cancelled/timed_out.
 
 ### GET /list — open notifications
+
+Use `GET /list?include_missed=true` to include undismissed `timed_out` asks.
+`sjbis list` and `sjbis list --json` both request those asks. The phone and
+console show them under **Missed while away** until dismissed. Dismissal removes
+them from the list and preserves `timed_out` in `sjbis status`.
 
 ### GET /state — full dashboard state (notifications + history + rules + agents)
 

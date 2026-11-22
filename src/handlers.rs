@@ -19,7 +19,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 /// In-memory waiters for blocking callers
-pub type Waiters = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<AnswerEnvelope>>>>;
+pub type Waiters = Arc<Mutex<HashMap<String, Vec<tokio::sync::oneshot::Sender<AnswerEnvelope>>>>>;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -38,6 +38,49 @@ fn db_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<serde_json::Value>) {
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({ "error": e.to_string() })),
     )
+}
+
+fn notification_not_found() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))
+}
+
+fn notification_closed() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::CONFLICT, Json(serde_json::json!({"error": "notification already answered or cancelled"})))
+}
+
+pub(crate) async fn notify_waiters(state: &AppState, envelope: &AnswerEnvelope) {
+    if let Some(waiters) = state.waiters.lock().await.remove(&envelope.id) {
+        for tx in waiters {
+            let _ = tx.send(envelope.clone());
+        }
+    }
+}
+
+fn closed_envelope(notif: &Notification, via: &str, at: Option<chrono::DateTime<Utc>>) -> AnswerEnvelope {
+    AnswerEnvelope {
+        id: notif.id.clone(),
+        answer: None,
+        answer_label: None,
+        answered_at: at,
+        latency_ms: at.map(|at| at.signed_duration_since(notif.created_at).num_milliseconds()),
+        renderer: notif.question_type.to_string(),
+        src: notif.src.clone(),
+        via: via.to_string(),
+        note: None,
+        grant: None,
+        once: notif.once,
+    }
+}
+
+pub(crate) async fn expire_notifications(state: &AppState, elapsed_wait: Option<&str>) -> anyhow::Result<()> {
+    for notification in state.db.timeout_notifications(elapsed_wait).await? {
+        let envelope = closed_envelope(&notification, "timed_out", notification.timed_out_at);
+        state.broadcaster.broadcast(&SseEvent::NotificationTimedOut { notification });
+        // Existing dashboard and native clients use the close event to remove it from the inbox.
+        state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: envelope.id.clone(), envelope: envelope.clone() });
+        notify_waiters(state, &envelope).await;
+    }
+    Ok(())
 }
 
 /// GET /health — liveness check
@@ -59,7 +102,9 @@ pub async fn version() -> Json<serde_json::Value> {
 pub async fn get_state(
     State(state): State<AppState>,
 ) -> Result<Json<DashboardState>, (StatusCode, Json<serde_json::Value>)> {
-    let notifications = state.db.list_open_notifications().await.map_err(db_err)?;
+    expire_notifications(&state, None).await.map_err(db_err)?;
+    let (notifications, missed) = state.db.list_notifications(true).await.map_err(db_err)?
+        .into_iter().partition(|n| n.status == NotificationStatus::Open);
     let history = state.db.list_history(50).await.map_err(db_err)?;
     let rules = state.db.list_rules().await.map_err(db_err)?;
     let agents_raw = state.db.list_source_summaries().await.map_err(db_err)?;
@@ -69,6 +114,7 @@ pub async fn get_state(
     }
     Ok(Json(DashboardState {
         notifications,
+        missed,
         history,
         rules,
         agents,
@@ -99,7 +145,7 @@ pub async fn ask(
     // If no explicit type and we have an AI router, guess it
     let router_result = if req.question_type.is_none() {
         if let Some(ref router) = *state.router {
-            let open = state.db.list_open_notifications().await.unwrap_or_default();
+            let open = state.db.list_notifications(false).await.unwrap_or_default();
             let result = router.classify(&req.question, &req.agent_name, req.urgency, &open).await;
             if let Some(ref suggested) = result.renderer_suggested {
                 // The AI router may never lock a card: approval is opt-in only.
@@ -173,6 +219,8 @@ pub async fn ask(
         reply_to,
         status: NotificationStatus::Open,
         created_at,
+        timed_out_at: None,
+        missed_dismissed_at: None,
         answered_at: None,
         answer: None,
         answer_label: None,
@@ -219,10 +267,11 @@ pub async fn ask(
     if let Some(answer) = auto_answer {
         // Auto-answer: store and broadcast immediately
         let now = Utc::now();
-        state.db.answer_notification(&notification.id, &answer, Some(&answer), None).await.map_err(db_err)?;
         notification.status = NotificationStatus::Answered;
         notification.answer = Some(answer.clone());
+        notification.answer_label = Some(answer.clone());
         notification.answered_at = Some(now);
+        state.db.insert_notification(&notification).await.map_err(db_err)?;
 
         let envelope = AnswerEnvelope {
             id: notification.id.clone(),
@@ -255,7 +304,8 @@ pub async fn ask(
 
     // Send push notifications to registered iOS devices
     if notification.urgency >= 2 {
-        send_push_notifications(&state, &notification).await;
+        let notification = notification.clone();
+        tokio::spawn(async move { send_push_notifications(&state, &notification).await });
     }
 
     Ok(Json(notification))
@@ -288,10 +338,7 @@ pub fn check_plain_answer_allowed(
     notif: &Notification,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if notif.status != NotificationStatus::Open {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({"error": "notification already answered or cancelled"})),
-        ));
+        return Err(notification_closed());
     }
     if notif.question_type == QuestionType::Approval {
         return Err((
@@ -308,27 +355,24 @@ pub async fn answer(
     Path(id): Path<String>,
     Json(req): Json<AnswerRequest>,
 ) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
-    let notif = match state.db.get_notification(&id).await {
-        Ok(Some(n)) => n,
-        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
-        Err(e) => return Err(db_err(e)),
-    };
-
-    check_plain_answer_allowed(&notif)?;
-
-    let now = Utc::now();
-    let latency = now.signed_duration_since(notif.created_at).num_milliseconds();
-
-    state.db.answer_notification(&id, &req.answer, req.via.as_deref().or(Some(&req.answer)), req.note.as_deref()).await.map_err(db_err)?;
-
-    let updated = state.db.get_notification(&id).await.unwrap_or(Some(notif.clone())).unwrap_or(notif.clone());
+    let caller_timeout = req.via.as_deref() == Some("caller-timeout");
+    if caller_timeout {
+        expire_notifications(&state, None).await.map_err(db_err)?;
+    }
+    let notif = state.db.get_notification(&id).await.map_err(db_err)?.ok_or_else(notification_not_found)?;
+    if !(caller_timeout && notif.status == NotificationStatus::TimedOut && notif.question_type != QuestionType::Approval) {
+        check_plain_answer_allowed(&notif)?;
+    }
+    let updated = state.db.answer_notification(
+        &id, &req.answer, req.via.as_deref().or(Some(&req.answer)), req.note.as_deref(), caller_timeout,
+    ).await.map_err(db_err)?.ok_or_else(notification_closed)?;
 
     let envelope = AnswerEnvelope {
         id: id.clone(),
         answer: Some(req.answer.clone()),
         answer_label: updated.answer_label.clone(),
-        answered_at: Some(now),
-        latency_ms: Some(latency),
+        answered_at: updated.answered_at,
+        latency_ms: updated.answered_at.map(|at| at.signed_duration_since(updated.created_at).num_milliseconds()),
         renderer: updated.question_type.to_string(),
         src: updated.src.clone(),
         via: req.via.unwrap_or_else(|| "dashboard".to_string()),
@@ -338,11 +382,8 @@ pub async fn answer(
     };
 
     // Notify any blocking waiters
-    {
-        let mut waiters = state.waiters.lock().await;
-        if let Some(tx) = waiters.remove(&id) {
-            let _ = tx.send(envelope.clone());
-        }
+    if updated.status == NotificationStatus::Answered {
+        notify_waiters(&state, &envelope).await;
     }
 
     // Broadcast
@@ -360,19 +401,14 @@ pub async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    match state.db.get_notification(&id).await {
-        Ok(Some(notif)) => {
-            if notif.status == NotificationStatus::Answered {
-                return Ok(StatusCode::NO_CONTENT);
-            }
-            state.db.update_status(&id, NotificationStatus::Cancelled).await.map_err(db_err)?;
-            state.broadcaster.broadcast(&SseEvent::NotificationCancelled { id: id.clone() });
-            crate::push_handlers::push_closed(&state, &id, &notif.agent_name, "cancelled by the agent");
-            Ok(StatusCode::NO_CONTENT)
-        }
-        Ok(None) => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
-        Err(e) => Err(db_err(e)),
+    expire_notifications(&state, None).await.map_err(db_err)?;
+    let notif = state.db.get_notification(&id).await.map_err(db_err)?.ok_or_else(notification_not_found)?;
+    if state.db.cancel_notification(&id).await.map_err(db_err)? {
+        state.broadcaster.broadcast(&SseEvent::NotificationCancelled { id: id.clone() });
+        notify_waiters(&state, &closed_envelope(&notif, "cancelled", None)).await;
+        crate::push_handlers::push_closed(&state, &id, &notif.agent_name, "cancelled by the agent");
     }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// POST /dismiss/:id — mark as dismissed without sending a reply
@@ -380,45 +416,20 @@ pub async fn dismiss(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
-    let notif = match state.db.get_notification(&id).await {
-        Ok(Some(n)) => n,
-        Ok(None) => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
-        Err(e) => return Err(db_err(e)),
+    expire_notifications(&state, None).await.map_err(db_err)?;
+    let notif = match state.db.dismiss_notification(&id).await.map_err(db_err)? {
+        Some(notif) => notif,
+        None if state.db.get_notification(&id).await.map_err(db_err)?.is_some() => return Err(notification_closed()),
+        None => return Err(notification_not_found()),
     };
-
-    if notif.status != NotificationStatus::Open {
-        return Err((StatusCode::CONFLICT, Json(serde_json::json!({"error": "notification already answered, cancelled, or dismissed"}))));
+    let envelope = closed_envelope(&notif, "dismissed", notif.missed_dismissed_at.or(notif.answered_at));
+    if notif.status == NotificationStatus::Dismissed {
+        state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
+        notify_waiters(&state, &envelope).await;
+        crate::push_handlers::push_closed(&state, &id, &notif.agent_name, "dismissed");
+    } else {
+        state.broadcaster.broadcast(&SseEvent::NotificationMissedDismissed { id });
     }
-
-    let now = Utc::now();
-    let latency = now.signed_duration_since(notif.created_at).num_milliseconds();
-
-    state.db.dismiss_notification(&id).await.map_err(db_err)?;
-
-    let envelope = AnswerEnvelope {
-        id: id.clone(),
-        answer: None,
-        answer_label: None,
-        answered_at: Some(now),
-        latency_ms: Some(latency),
-        renderer: notif.question_type.to_string(),
-        src: notif.src.clone(),
-        via: "dismissed".to_string(),
-        note: None,
-        grant: None,
-        once: notif.once,
-    };
-
-    // Signal any blocking waiters so they return immediately
-    {
-        let mut waiters = state.waiters.lock().await;
-        if let Some(tx) = waiters.remove(&id) {
-            let _ = tx.send(envelope.clone());
-        }
-    }
-
-    state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
-    crate::push_handlers::push_closed(&state, &id, &notif.agent_name, "dismissed");
 
     Ok(Json(envelope))
 }
@@ -468,9 +479,19 @@ pub async fn snooze(
     }
 }
 
-/// GET /list — dump open notifications
-pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<Notification>>, (StatusCode, Json<serde_json::Value>)> {
-    let notifs = state.db.list_open_notifications().await.map_err(db_err)?;
+#[derive(Deserialize)]
+pub struct ListQuery {
+    #[serde(default)]
+    include_missed: bool,
+}
+
+/// GET /list — open notifications and, on request, undismissed timeouts.
+pub async fn list(
+    State(state): State<AppState>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<Vec<Notification>>, (StatusCode, Json<serde_json::Value>)> {
+    expire_notifications(&state, None).await.map_err(db_err)?;
+    let notifs = state.db.list_notifications(q.include_missed).await.map_err(db_err)?;
     Ok(Json(notifs))
 }
 
@@ -479,6 +500,7 @@ pub async fn get_notification(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Notification>, (StatusCode, Json<serde_json::Value>)> {
+    expire_notifications(&state, None).await.map_err(db_err)?;
     match state.db.get_notification(&id).await.map_err(db_err)? {
         Some(notif) => Ok(Json(notif)),
         None => Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "notification not found"})))),
@@ -494,6 +516,7 @@ pub async fn history(
     State(state): State<AppState>,
     Query(q): Query<HistoryQuery>,
 ) -> Result<Json<Vec<Notification>>, (StatusCode, Json<serde_json::Value>)> {
+    expire_notifications(&state, None).await.map_err(db_err)?;
     let items = state.db.list_history(q.limit.unwrap_or(50)).await.map_err(db_err)?;
     Ok(Json(items))
 }
@@ -782,114 +805,67 @@ pub async fn register_agent(
     Ok(Json(agent))
 }
 
+async fn recorded_wait_result(state: &AppState, notif: &Notification) -> Option<AnswerEnvelope> {
+    match notif.status {
+        NotificationStatus::Open | NotificationStatus::Muted => None,
+        NotificationStatus::Answered => {
+            let mut envelope = closed_envelope(notif, "dashboard", notif.answered_at);
+            envelope.answer = notif.answer.clone();
+            envelope.answer_label = notif.answer_label.clone();
+            envelope.note = notif.note.clone();
+            if notif.question_type == QuestionType::Approval {
+                crate::grant_handlers::attach_answering_grant(state, &mut envelope).await;
+            }
+            Some(envelope)
+        }
+        NotificationStatus::TimedOut => Some(closed_envelope(notif, "timed_out", notif.timed_out_at)),
+        _ => Some(closed_envelope(notif, notif.status.as_str(), notif.answered_at)),
+    }
+}
+
 /// GET /wait/{id} — blocking wait for an answer
 pub async fn wait_for_answer(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<AnswerEnvelope>, (StatusCode, Json<serde_json::Value>)> {
-    // First check if already answered, dismissed, cancelled, or timed out
-    if let Ok(Some(notif)) = state.db.get_notification(&id).await {
-        match notif.status {
-            NotificationStatus::Answered => {
-                let mut envelope = AnswerEnvelope {
-                    id: id.clone(),
-                    answer: notif.answer.clone(),
-                    answer_label: notif.answer_label.clone(),
-                    answered_at: notif.answered_at,
-                    latency_ms: notif.answered_at.map(|at| at.signed_duration_since(notif.created_at).num_milliseconds()),
-                    renderer: notif.question_type.to_string(),
-                    src: notif.src.clone(),
-                    via: "dashboard".to_string(),
-                    note: notif.note.clone(),
-                    grant: None,
-                    once: notif.once,
-                };
-                // An answered approval ask was answered by a signed grant:
-                // hand the waiter the envelope and via = "ta:<signer>".
-                if notif.question_type == QuestionType::Approval {
-                    crate::grant_handlers::attach_answering_grant(&state, &mut envelope).await;
-                }
-                return Ok(Json(envelope));
-            }
-            NotificationStatus::Dismissed | NotificationStatus::Cancelled | NotificationStatus::TimedOut => {
-                let envelope = AnswerEnvelope {
-                    id: id.clone(),
-                    answer: None,
-                    answer_label: None,
-                    answered_at: notif.answered_at,
-                    latency_ms: notif.answered_at.map(|at| at.signed_duration_since(notif.created_at).num_milliseconds()),
-                    renderer: notif.question_type.to_string(),
-                    src: notif.src.clone(),
-                    via: format!("{:?}", notif.status).to_lowercase(),
-                    note: None,
-                    grant: None,
-                    once: notif.once,
-                };
-                return Ok(Json(envelope));
-            }
-            _ => {}
-        }
-    }
-
-    // Set up a oneshot waiter
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    {
+    expire_notifications(&state, None).await.map_err(db_err)?;
+    let (notif, receiver) = {
+        // Coordinate the read and registration with producers waking the waiters.
         let mut waiters = state.waiters.lock().await;
-        waiters.insert(id.clone(), tx);
-    }
-
-    // Cap the wait at the notification's deadline (if any), so `--blocking`
-    // honors --deadline. Fall back to a generous ceiling otherwise.
-    const MAX_WAIT: i64 = 600; // hard ceiling (seconds) for deadline-less waits
-    let wait_secs: i64 = {
-        let deadline = state.db.get_notification(&id).await.ok().flatten().and_then(|n| n.deadline);
-        match deadline {
-            Some(dl) => {
-                let remaining = (dl - Utc::now()).num_seconds();
-                remaining.clamp(0, MAX_WAIT)
-            }
-            None => MAX_WAIT,
-        }
+        let notif = state.db.get_notification(&id).await.map_err(db_err)?.ok_or_else(notification_not_found)?;
+        let receiver = if matches!(notif.status, NotificationStatus::Open | NotificationStatus::Muted) {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let queued = waiters.entry(id.clone()).or_default();
+            queued.retain(|tx| !tx.is_closed());
+            queued.push(tx);
+            Some(rx)
+        } else {
+            None
+        };
+        (notif, receiver)
     };
 
-    match tokio::time::timeout(std::time::Duration::from_secs(wait_secs.max(0) as u64), rx).await {
-        Ok(Ok(envelope)) => Ok(Json(envelope)),
-        Ok(Err(_)) => Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "waiter cancelled"})))),
-        Err(_) => {
-            // Deadline reached with no answer. Clean up the waiter, mark the
-            // notification timed_out, broadcast so the dashboard reflects it,
-            // and return a STRUCTURED timeout envelope (HTTP 200) so blocking
-            // callers can apply their own best judgement.
-            {
-                let mut waiters = state.waiters.lock().await;
-                waiters.remove(&id);
-            }
-            let notif = state.db.get_notification(&id).await.ok().flatten();
-            // Only transition if still open (a human may have just answered).
-            if let Some(ref n) = notif {
-                if n.status == NotificationStatus::Open {
-                    let _ = state.db.update_status(&id, NotificationStatus::TimedOut).await;
-                }
-            }
-            let renderer = notif.as_ref().map(|n| n.question_type.to_string()).unwrap_or_default();
-            let src = notif.as_ref().map(|n| n.src.clone()).unwrap_or_default();
-            let envelope = AnswerEnvelope {
-                id: id.clone(),
-                answer: None,
-                answer_label: None,
-                answered_at: Some(Utc::now()),
-                latency_ms: None,
-                renderer,
-                src,
-                via: "timed_out".to_string(),
-                note: None,
-                grant: None,
-                once: notif.as_ref().and_then(|n| n.once),
-            };
-            state.broadcaster.broadcast(&SseEvent::NotificationDismissed { id: id.clone(), envelope: envelope.clone() });
-            Ok(Json(envelope))
+    if let Some(receiver) = receiver {
+        let cap = std::time::Duration::from_secs(600);
+        let wait = notif.deadline.map_or(cap, |deadline| {
+            (deadline - Utc::now()).to_std().unwrap_or_default().min(cap)
+        });
+        match tokio::time::timeout(wait, receiver).await {
+            Ok(Ok(envelope)) => return Ok(Json(envelope)),
+            Ok(Err(e)) => return Err(db_err(e)),
+            Err(_) => expire_notifications(&state, Some(&id)).await.map_err(db_err)?,
         }
     }
+
+    let notif = state.db.get_notification(&id).await.map_err(db_err)?.ok_or_else(notification_not_found)?;
+    if let Some(envelope) = recorded_wait_result(&state, &notif).await {
+        return Ok(Json(envelope));
+    }
+
+    // A muted notification stays muted even if its caller waited for an answer.
+    let envelope = closed_envelope(&notif, "timed_out", Some(Utc::now()));
+    notify_waiters(&state, &envelope).await;
+    Ok(Json(envelope))
 }
 
 /// Background task: deliver response back to caller
@@ -953,6 +929,9 @@ pub async fn register_device(
     State(state): State<AppState>,
     Json(req): Json<DeviceRegisterRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if req.token.is_empty() || req.token.len() % 2 != 0 || !req.token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid APNs device token"}))));
+    }
     state.db.register_device_token(&req.token, req.device_name.as_deref())
         .await
         .map_err(db_err)?;
@@ -998,15 +977,16 @@ async fn send_push_notifications(state: &AppState, notif: &Notification) {
     } else {
         notif.agent_name.clone()
     };
-    let body = if notif.question.len() > 100 {
-        format!("{}…", &notif.question[..100])
-    } else {
-        notif.question.clone()
-    };
+    let mut chars = notif.question.chars();
+    let mut body: String = chars.by_ref().take(100).collect();
+    if chars.next().is_some() {
+        body.push('…');
+    }
+    let expiry = notif.deadline.map(|deadline| deadline.timestamp());
 
     for (token, _name) in &tokens {
-        if let Err(e) = apns.send(token, &title, &body, Some(&notif.id)).await {
-            tracing::warn!("push to {}… failed: {}", &token[..8.min(token.len())], e);
+        if let Err(error) = apns.send(token, &title, &body, &notif.id, expiry).await {
+            tracing::warn!(id = %notif.id, %error, "APNs push failed");
         }
     }
 }
