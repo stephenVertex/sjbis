@@ -7,22 +7,27 @@ struct NotificationDetailView: View {
     @State private var showNote = false
     @State private var note = ""
 
-    private var status: NotificationStatus {
-        let current = store.missed.first { $0.id == notif.id }
+    private var current: SjbisNotification {
+        store.notifications.first { $0.id == notif.id }
+            ?? store.missed.first { $0.id == notif.id }
             ?? store.history.first { $0.id == notif.id }
             ?? notif
+    }
+
+    private var status: NotificationStatus {
         if current.status == .open, let deadline = current.deadline, deadline <= Date() { return .timed_out }
         return current.status
     }
 
     var body: some View {
+        let displayed = notif.question_type == .approval ? current : notif
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if notif.question_type == .celebrate {
                     CelebrationArtwork()
                 }
-                header
-                if let md = notif.detail_markdown {
+                header(displayed)
+                if let md = displayed.detail_markdown {
                     if let attr = try? AttributedString(markdown: md) {
                         Text(attr)
                             .font(.callout)
@@ -32,18 +37,19 @@ struct NotificationDetailView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
-                } else if let detail = notif.detail {
+                } else if let detail = displayed.detail {
                     Text(detail)
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                if status == .open {
+                if notif.question_type == .approval {
+                    Divider()
+                    ApprovalView(ask: current, status: status)
+                } else if status == .open {
                     Divider()
                     renderer
-                    if notif.question_type != .approval {
-                        Divider()
-                        noteSection
-                    }
+                    Divider()
+                    noteSection
                 } else {
                     Text(status == .timed_out ? "This ask expired." : "This ask is closed.")
                         .foregroundStyle(.secondary)
@@ -70,14 +76,14 @@ struct NotificationDetailView: View {
         }
     }
 
-    private var header: some View {
+    private func header(_ displayed: SjbisNotification) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(notif.question)
+            Text(displayed.question)
                 .font(.title3)
                 .fontWeight(.semibold)
             HStack {
-                if let inst = notif.instance {
-                    Text("\(notif.agent_name) · \(inst)")
+                if let inst = displayed.instance {
+                    Text("\(displayed.agent_name) · \(inst)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -86,7 +92,7 @@ struct NotificationDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                UrgencyBadge(urgency: notif.urgency)
+                UrgencyBadge(urgency: displayed.urgency)
             }
         }
     }
@@ -151,8 +157,7 @@ struct NotificationDetailView: View {
         case .file:
             FileRenderer(notif: notif, onAnswer: doAnswer)
         case .approval:
-            Text("Sign this request on the phone web app or console.")
-                .foregroundStyle(.secondary)
+            EmptyView()
         }
     }
 }

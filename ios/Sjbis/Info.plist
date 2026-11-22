@@ -16,6 +16,8 @@
     <string>APPL</string>
     <key>CFBundleDisplayName</key>
     <string>SJBIS</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Use Face ID to sign SJBIS approvals on this iPhone.</string>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UISupportedInterfaceOrientations</key>

@@ -36,6 +36,7 @@ struct SettingsView: View {
                     LabeledContent("Open", value: "\(store.notifications.count)")
                     LabeledContent("History", value: "\(store.history.count)")
                 }
+                ApprovalSetupSection()
                 Section("About") {
                     LabeledContent("App", value: "SJBIS iOS 0.1.0")
                 }

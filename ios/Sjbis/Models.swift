@@ -145,6 +145,9 @@ struct SjbisNotification: Codable, Identifiable, Hashable {
     var snooze_until: Date?
     var note: String?
     var sub_questions: [SubQuestion]?
+    var ttl_secs: Int?
+    var renews: String?
+    var once: Bool?
 }
 
 struct Agent: Codable, Identifiable, Hashable {

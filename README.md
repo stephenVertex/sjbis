@@ -937,6 +937,22 @@ added  = "2026-10-23T00:00:00Z"
 This copy only rejects junk early. Verifiers (`ta verify`) trust their own
 pinned registry, never keys served by the daemon.
 
+### Face ID on the native iPhone app
+
+Open **Settings → Approval Signing → Set Up Face ID** in the native app.
+The iPhone creates a P-256 key in its Secure Enclave. Use **Share Enrollment
+Command** to get the public key and the `ta signers add` command. On the
+daemon, use that command with `--signers ~/.config/sjbis/signers.toml` (or the
+path configured in `SJBIS_SIGNERS`). Pin the same key on the machines that
+run `ta verify`, then choose **Check Enrollment** in the app.
+
+Open an approval, choose an option if offered, and tap **Approve** or
+**Deny**. The app asks for Face ID for each decision and displays the grant ID
+after the daemon verifies it. You can set the grant lifetime and add a note
+before signing. An ask that requires a single-use grant keeps that setting.
+If Face ID enrollment changes and the key becomes unusable, use **Replace
+Signing Key** and enroll the new public key.
+
 ### Endpoints
 
 | Endpoint | Does |
