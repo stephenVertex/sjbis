@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var store: SjbisStore
     @State private var daemonURL = AppSettings.shared.daemonURL
+    @AppStorage(AppSettings.mazelTovModeKey) private var mazelTovMode = false
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
@@ -35,6 +36,9 @@ struct SettingsView: View {
                 Section("Notifications") {
                     LabeledContent("Open", value: "\(store.notifications.count)")
                     LabeledContent("History", value: "\(store.history.count)")
+                }
+                Section("Celebrations") {
+                    Toggle("Mazel tov mode", isOn: $mazelTovMode)
                 }
                 ApprovalSetupSection()
                 Section("About") {

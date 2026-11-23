@@ -4,6 +4,7 @@ struct NotificationDetailView: View {
     let notif: SjbisNotification
     @EnvironmentObject var store: SjbisStore
     @Environment(\.dismiss) var dismiss
+    @AppStorage(AppSettings.mazelTovModeKey) private var mazelTovMode = false
     @State private var showNote = false
     @State private var note = ""
 
@@ -24,7 +25,11 @@ struct NotificationDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if notif.question_type == .celebrate {
-                    CelebrationArtwork()
+                    if mazelTovMode {
+                        MazelTovBanner()
+                    } else {
+                        CelebrationArtwork()
+                    }
                 }
                 header(displayed)
                 if let md = displayed.detail_markdown {
@@ -145,7 +150,7 @@ struct NotificationDetailView: View {
         case .numeric:
             NumericRenderer(notif: notif, onAnswer: doAnswer)
         case .ack, .celebrate:
-            AckRenderer(notif: notif, onAnswer: doAnswer)
+            AckRenderer(notif: notif, onAnswer: doAnswer, mazelTovMode: mazelTovMode)
         case .diff:
             DiffRenderer(notif: notif, onAnswer: doAnswer)
         case .picklist:

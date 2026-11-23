@@ -3,6 +3,7 @@ import SwiftUI
 
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
+    static let mazelTovModeKey = "mazelTovMode"
     private let defaults = UserDefaults.standard
     private let daemonURLKey = "daemonURL"
 

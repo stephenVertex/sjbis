@@ -132,10 +132,12 @@ struct NumericRenderer: View {
 struct AckRenderer: View {
     let notif: SjbisNotification
     let onAnswer: (String) -> Void
+    var mazelTovMode = false
 
     var body: some View {
         let celebrates = notif.question_type == .celebrate
-        let label = notif.ack_label ?? (celebrates ? "Celebrate" : "Acknowledge")
+        let standardLabel = notif.ack_label ?? (celebrates ? "Celebrate" : "Acknowledge")
+        let label = celebrates && mazelTovMode ? "Mazel tov" : standardLabel
         AnswerButton(label: label, action: { onAnswer(celebrates ? label : "ack") }, prominent: true)
     }
 }
