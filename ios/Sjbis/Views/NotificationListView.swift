@@ -3,6 +3,10 @@ import SwiftUI
 struct NotificationListView: View {
     @EnvironmentObject var store: SjbisStore
     @State private var expandedIDs: Set<String> = []
+    @State private var pendingMissedIDs: [String] = []
+    @State private var confirmingClear = false
+    @State private var clearingMissed = false
+    @State private var clearError: String?
 
     var body: some View {
         ScrollView {
@@ -21,9 +25,20 @@ struct NotificationListView: View {
                     }
                 }
                 if !store.missed.isEmpty {
-                    Text("Missed while away")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack {
+                        Text("Missed while away")
+                            .font(.headline)
+                        Spacer()
+                        if clearingMissed {
+                            ProgressView()
+                                .accessibilityLabel("Clearing missed requests")
+                        } else {
+                            Button("Clear All", role: .destructive) {
+                                pendingMissedIDs = store.missed.map(\.id)
+                                confirmingClear = true
+                            }
+                        }
+                    }
                     ForEach(store.missed) { notif in
                         FoldableNotificationCard(isExpanded: expanded(notif.id)) { isExpanded in
                             VStack(alignment: .leading, spacing: 8) {
@@ -51,6 +66,30 @@ struct NotificationListView: View {
         .navigationDestination(for: SjbisNotification.self) { notif in
             NotificationDetailView(notif: notif)
         }
+        .confirmationDialog("Clear \(pendingMissedIDs.count) missed requests?", isPresented: $confirmingClear, titleVisibility: .visible) {
+            Button("Clear Missed", role: .destructive) {
+                let ids = pendingMissedIDs
+                clearingMissed = true
+                Task {
+                    defer { clearingMissed = false }
+                    do {
+                        try await store.clearMissed(ids)
+                        expandedIDs.subtract(ids)
+                    } catch {
+                        clearError = error.localizedDescription
+                    }
+                }
+            }
+        } message: {
+            Text("You can still find these requests in History.")
+        }
+        .alert("Couldn’t clear missed requests", isPresented: Binding(
+            get: { clearError != nil }, set: { if !$0 { clearError = nil } }
+        )) {
+            Button("OK", role: .cancel) { clearError = nil }
+        } message: {
+            Text(clearError ?? "")
+        }
     }
 
     private func expanded(_ id: String) -> Binding<Bool> {
@@ -67,9 +106,10 @@ struct NotificationListView: View {
     }
 }
 
-private struct FoldableNotificationCard<Content: View>: View {
+struct FoldableNotificationCard<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Binding var isExpanded: Bool
+    var foldLabel = "summary"
     @ViewBuilder var content: (Bool) -> Content
 
     var body: some View {
@@ -88,7 +128,7 @@ private struct FoldableNotificationCard<Content: View>: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(isExpanded ? "Fold summary" : "Expand summary")
+            .accessibilityLabel(isExpanded ? "Fold \(foldLabel)" : "Expand \(foldLabel)")
         }
         .padding(14)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))

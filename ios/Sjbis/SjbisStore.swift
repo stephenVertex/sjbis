@@ -142,8 +142,12 @@ final class SjbisStore: ObservableObject {
                     notifications[idx] = n
                 }
             }
-        case "notification_timed_out", "notification_missed_dismissed":
+        case "notification_timed_out":
             Task { await refresh() }
+        case "notification_missed_dismissed":
+            if let id = event.id { removeMissed([id]) }
+        case "notifications_missed_cleared":
+            if let ids = event.ids { removeMissed(ids) }
         case "notification_answered", "notification_dismissed":
             if let env = event.envelope {
                 if let idx = notifications.firstIndex(where: { $0.id == env.id }) {
@@ -153,6 +157,7 @@ final class SjbisStore: ObservableObject {
                     n.answer = env.answer
                     n.answer_label = env.answer_label
                     n.answered_at = env.answered_at
+                    n.note = env.note
                     history.insert(n, at: 0)
                     notifications.remove(at: idx)
                 }
@@ -193,45 +198,45 @@ final class SjbisStore: ObservableObject {
     }
 
     func approvalSignerIsPinned(_ identity: ApprovalSignerIdentity) async throws -> Bool {
-        let base = try approvalServer()
+        let base = try serverURL()
         let pinned = try await approvalSignerIsPinned(identity, at: base)
-        guard base == (try? approvalServer()) else { throw ApprovalError.serverChanged }
+        guard base == (try? serverURL()) else { throw ApprovalError.serverChanged }
         return pinned
     }
 
     func submitApproval(_ submission: ApprovalSubmission, for ask: SjbisNotification,
                         identity: ApprovalSignerIdentity) async throws -> ApprovalGrant {
-        let base = try approvalServer()
+        let base = try serverURL()
         guard try await approvalSignerIsPinned(identity, at: base) else { throw ApprovalError.unenrolled }
         let askURL = base.appendingPathComponent("notification").appendingPathComponent(ask.id)
-        let current: SjbisNotification = try await approvalRequest(URLRequest(url: askURL))
+        let current: SjbisNotification = try await requestJSON(URLRequest(url: askURL))
         guard current.id == ask.id, current.question.utf8.elementsEqual(ask.question.utf8),
               current.agent_name == ask.agent_name, current.choices == ask.choices,
               current.detail == ask.detail, current.detail_markdown == ask.detail_markdown,
               current.renews == ask.renews, current.once == ask.once,
               current.ttl_secs == ask.ttl_secs else { throw ApprovalError.requestChanged }
         _ = try submission.record(for: current, signer: identity.id, now: Date())
-        guard base == (try? approvalServer()) else { throw ApprovalError.serverChanged }
+        guard base == (try? serverURL()) else { throw ApprovalError.serverChanged }
 
         let grant = try await ApprovalKey.sign(submission, for: current, identity: identity)
         try Task.checkCancellation()
-        guard base == (try? approvalServer()) else { throw ApprovalError.serverChanged }
+        guard base == (try? serverURL()) else { throw ApprovalError.serverChanged }
         let grantsURL = base.appendingPathComponent("grants")
         var request = URLRequest(url: grantsURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(grant)
         do {
-            let result: ApprovalGrantResponse = try await approvalRequest(request)
+            let result: ApprovalGrantResponse = try await requestJSON(request)
             guard result.envelope == grant else { throw ApprovalError.invalidResponse }
         } catch {
             // A dropped response can follow a successful commit. Look up this exact envelope.
             let lookup = URLRequest(url: grantsURL.appendingPathComponent(grant.id))
-            guard let stored: ApprovalGrantResponse = try? await approvalRequest(lookup),
+            guard let stored: ApprovalGrantResponse = try? await requestJSON(lookup),
                   stored.envelope == grant else { throw error }
         }
 
-        if base == (try? approvalServer()) {
+        if base == (try? serverURL()) {
             refreshGeneration += 1
             notifications.removeAll { $0.id == ask.id }
             if !history.contains(where: { $0.id == ask.id }) {
@@ -247,7 +252,7 @@ final class SjbisStore: ObservableObject {
         return grant
     }
 
-    private func approvalServer() throws -> URL {
+    private func serverURL() throws -> URL {
         guard let base = URL(string: daemonURL), let scheme = base.scheme,
               ["http", "https"].contains(scheme), base.host != nil else { throw URLError(.badURL) }
         return base
@@ -256,18 +261,53 @@ final class SjbisStore: ObservableObject {
     private func approvalSignerIsPinned(_ identity: ApprovalSignerIdentity, at base: URL) async throws -> Bool {
         var request = URLRequest(url: base.appendingPathComponent("signers"))
         request.cachePolicy = .reloadIgnoringLocalCacheData
-        let signers: [ApprovalSignerIdentity] = try await approvalRequest(request)
+        let signers: [ApprovalSignerIdentity] = try await requestJSON(request)
         return signers.contains(identity)
     }
 
-    private func approvalRequest<T: Decodable>(_ request: URLRequest) async throws -> T {
+    private func requestJSON<T: Decodable>(_ request: URLRequest) async throws -> T {
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let response = response as? HTTPURLResponse else { throw ApprovalError.invalidResponse }
+        guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard (200..<300).contains(response.statusCode) else {
-            let body = try? decoder.decode(ApprovalServerError.self, from: data)
-            throw ApprovalError.server(body?.error ?? "SJBIS rejected the request (HTTP \(response.statusCode)).")
+            let body = try? decoder.decode(DaemonError.self, from: data)
+            throw DaemonError(error: body?.error ?? "SJBIS rejected the request (HTTP \(response.statusCode)).")
         }
         return try decoder.decode(T.self, from: data)
+    }
+
+    func clearMissed(_ ids: [String]) async throws {
+        let base = try serverURL()
+        var request = URLRequest(url: base.appendingPathComponent("missed").appendingPathComponent("clear"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(MissedIDs(ids: ids))
+        let _: MissedIDs = try await requestJSON(request)
+        guard base == (try? serverURL()) else { return }
+        removeMissed(ids)
+    }
+
+    private func removeMissed(_ ids: [String]) {
+        let cleared = Set(ids)
+        refreshGeneration += 1
+        missed.removeAll { cleared.contains($0.id) }
+    }
+
+    func fetchApprovalGrants(for id: String) async throws -> [ApprovalGrantResponse] {
+        let url = try serverURL().appendingPathComponent("grants")
+            .appending(queryItems: [URLQueryItem(name: "ask", value: id)])
+        return try await requestJSON(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+    }
+
+    func fetchOlderHistory(before id: String, limit: Int) async throws -> [SjbisNotification] {
+        let url = try serverURL().appendingPathComponent("history").appending(queryItems: [
+            URLQueryItem(name: "before", value: id), URLQueryItem(name: "limit", value: String(limit)),
+        ])
+        return try await requestJSON(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+    }
+
+    func fetchActivity() async throws -> RequestActivity {
+        let url = try serverURL().appendingPathComponent("activity")
+        return try await requestJSON(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
     }
 
     func dismiss(_ id: String) async {
@@ -296,12 +336,13 @@ final class SjbisStore: ObservableObject {
     }
 }
 
-private struct ApprovalServerError: Decodable {
+private struct DaemonError: Decodable, LocalizedError {
     var error: String
+    var errorDescription: String? { error }
 }
 
-private struct ApprovalGrantResponse: Decodable {
-    var envelope: ApprovalGrant
+private struct MissedIDs: Codable {
+    var ids: [String]
 }
 
 private struct SSEEventWrapper: Codable {
@@ -309,5 +350,6 @@ private struct SSEEventWrapper: Codable {
     var notification: SjbisNotification?
     var envelope: AnswerEnvelope?
     var id: String?
+    var ids: [String]?
     var rule: Rule?
 }

@@ -473,11 +473,29 @@ pub enum SseEvent {
     NotificationAnswered { envelope: AnswerEnvelope },
     NotificationTimedOut { notification: Notification },
     NotificationMissedDismissed { id: NotificationId },
+    NotificationsMissedCleared { ids: Vec<NotificationId> },
     NotificationCancelled { id: NotificationId },
     NotificationDismissed { id: NotificationId, envelope: AnswerEnvelope },
     RuleCreated { rule: Rule },
     RuleUpdated { rule: Rule },
     RuleDeleted { id: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MissedIds {
+    pub ids: Vec<NotificationId>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestActivity {
+    pub as_of: DateTime<Utc>,
+    pub hours: Vec<RequestHour>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestHour {
+    pub start: DateTime<Utc>,
+    pub count: i64,
 }
 
 /// Dashboard init payload: everything the UI needs on first load

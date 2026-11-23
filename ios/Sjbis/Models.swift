@@ -177,6 +177,19 @@ struct DashboardState: Codable {
     var version: String?
 }
 
+struct RequestActivity: Decodable {
+    var as_of: Date
+    var hours: [RequestHour]
+}
+
+struct RequestHour: Decodable, Identifiable {
+    var start: Date
+    var count: Int
+
+    var id: Date { start }
+    var end: Date { start.addingTimeInterval(3600) }
+}
+
 struct AnswerRequest: Codable {
     var answer: String
     var via: String?

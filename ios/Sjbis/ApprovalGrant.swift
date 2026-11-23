@@ -51,6 +51,17 @@ struct ApprovalGrant: Codable, Equatable {
     }
 }
 
+struct ApprovalGrantResponse: Decodable {
+    var envelope: ApprovalGrant
+    var status: ApprovalGrantStatus?
+}
+
+struct ApprovalGrantStatus: Decodable {
+    var expired: Bool
+    var revoked_by: String?
+    var claimed_by: String?
+}
+
 struct ApprovalSubmission {
     var decision: ApprovalDecision
     var answer: String?
@@ -92,7 +103,6 @@ enum ApprovalError: LocalizedError {
     case requestChanged
     case invalidResponse
     case keychain(OSStatus)
-    case server(String)
 
     var errorDescription: String? {
         switch self {
@@ -106,7 +116,6 @@ enum ApprovalError: LocalizedError {
         case .requestChanged: "The approval changed. Review the latest request before signing."
         case .invalidResponse: "SJBIS couldn’t confirm this grant. Check the queue before trying again."
         case .keychain(let status): "Couldn’t access the signing key (Keychain error \(status))."
-        case .server(let message): message
         }
     }
 }

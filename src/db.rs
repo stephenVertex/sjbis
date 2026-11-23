@@ -168,11 +168,19 @@ impl Db {
         }
     }
 
-    pub async fn list_history(&self, limit: usize) -> Result<Vec<Notification>> {
+    pub async fn list_history(&self, limit: usize, before: Option<&str>) -> Result<Vec<Notification>> {
         let rows = sqlx::query(
-            &format!("SELECT {NOTIF_COLS} FROM notifications WHERE status IN ('answered', 'timed_out') ORDER BY COALESCE(answered_at, timed_out_at, created_at) DESC, id LIMIT $1"),
+            &format!("WITH boundary AS (
+                SELECT id, COALESCE(answered_at, timed_out_at, created_at) AS closed_at
+                FROM notifications WHERE id = $2
+             ) SELECT {NOTIF_COLS} FROM notifications
+               WHERE status IN ('answered', 'timed_out') AND ($2::text IS NULL OR EXISTS (
+                   SELECT 1 FROM boundary WHERE COALESCE(answered_at, timed_out_at, created_at) < boundary.closed_at
+                   OR (COALESCE(answered_at, timed_out_at, created_at) = boundary.closed_at AND notifications.id > boundary.id)
+               )) ORDER BY COALESCE(answered_at, timed_out_at, created_at) DESC, id LIMIT $1"),
         )
         .bind(limit as i64)
+        .bind(before)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
@@ -231,6 +239,39 @@ impl Db {
         .fetch_optional(&self.pool)
         .await?;
         row.as_ref().map(Self::row_to_notification).transpose()
+    }
+
+    pub async fn clear_missed(&self, ids: &[NotificationId]) -> Result<Vec<NotificationId>> {
+        Ok(sqlx::query_scalar(
+            "UPDATE notifications SET missed_dismissed_at = clock_timestamp()
+             WHERE id = ANY($1::text[]) AND status = 'timed_out' AND missed_dismissed_at IS NULL
+             RETURNING id",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    pub async fn request_activity(&self, as_of: DateTime<Utc>) -> Result<RequestActivity> {
+        let start = as_of - chrono::Duration::hours(24);
+        let rows: Vec<(i32, i64)> = sqlx::query_as(
+            "WITH counts AS (
+                 SELECT floor(extract(epoch FROM (created_at - $1::timestamptz)) / 3600)::int AS bucket,
+                        count(*) AS count
+                 FROM notifications WHERE created_at >= $1 AND created_at < $2 GROUP BY 1
+             ) SELECT hours.bucket, COALESCE(counts.count, 0)
+               FROM generate_series(0, 23) AS hours(bucket) LEFT JOIN counts USING (bucket)
+               ORDER BY hours.bucket",
+        )
+        .bind(start)
+        .bind(as_of)
+        .fetch_all(&self.pool)
+        .await?;
+        let hours = rows.into_iter().map(|(bucket, count)| RequestHour {
+            start: start + chrono::Duration::hours(i64::from(bucket)),
+            count,
+        }).collect();
+        Ok(RequestActivity { as_of, hours })
     }
 
     pub async fn delete_notification(&self, id: &str) -> Result<()> {

@@ -97,10 +97,12 @@ fn api_routes() -> Router<AppState> {
         .route("/answer/{id}", post(answer))
         .route("/cancel/{id}", delete(cancel))
         .route("/dismiss/{id}", post(dismiss))
+        .route("/missed/clear", post(clear_missed))
         .route("/snooze/{id}", post(snooze))
         .route("/list", get(list))
         .route("/notification/{id}", get(get_notification))
         .route("/history", get(history))
+        .route("/activity", get(activity))
         .route("/events", get(events))
         .route("/wait/{id}", get(wait_for_answer))
         .route("/rules", post(create_rule))
@@ -354,6 +356,67 @@ mod tests {
         let (_, body) = request(app, Method::GET, "/list?include_missed=true").await;
         let rows: Vec<Notification> = serde_json::from_str(&body)?;
         assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["open", "deadline"]);
+        Ok(())
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "needs an isolated PostgreSQL DATABASE_URL"]
+    async fn bulk_clear_preserves_history_and_activity(pool: sqlx::PgPool) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO notifications (id, agent_name, question, question_type, status, created_at, timed_out_at, answered_at)
+             VALUES ('recent', 'fixture', 'Clear me?', 'ack', 'timed_out', now() - interval '10 min', now() - interval '4 min', NULL),
+                    ('kept', 'fixture', 'Keep me?', 'ack', 'timed_out', now() - interval '20 min', now() - interval '5 min', NULL),
+                    ('open', 'fixture', 'Still waiting?', 'ack', 'open', now() - interval '5 min', NULL, NULL),
+                    ('approved', 'fixture', 'Approve?', 'approval', 'answered', now() - interval '70 min', NULL, now() - interval '65 min'),
+                    ('muted', 'fixture', 'Muted?', 'approval', 'muted', now() - interval '90 min', NULL, NULL),
+                    ('older', 'fixture', 'Older?', 'approval', 'timed_out', now() - interval '25 hours', now() - interval '25 hours', NULL)"
+        ).execute(&pool).await?;
+        let state = AppState {
+            db: Db::from_pool(pool),
+            broadcaster: Broadcaster::new(),
+            router: Arc::new(None),
+            waiters: Arc::new(Mutex::new(HashMap::new())),
+            apns: Arc::new(Mutex::new(None)),
+            webpush: Arc::new(None),
+        };
+        let mut events = state.broadcaster.subscribe();
+        let app = api_routes().with_state(state);
+
+        for expected in [vec!["recent".to_string()], vec![]] {
+            let response = app.clone().oneshot(Request::builder()
+                .method(Method::POST)
+                .uri("/missed/clear")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"ids":["recent","open","missing"]}"#))?).await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await?;
+            assert_eq!(serde_json::from_slice::<MissedIds>(&body)?.ids, expected);
+        }
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&events.try_recv()?)?, serde_json::json!({
+            "event": "notifications_missed_cleared", "ids": ["recent"],
+        }));
+        assert!(events.try_recv().is_err());
+
+        let (_, body) = request(app.clone(), Method::GET, "/list?include_missed=true").await;
+        let rows: Vec<Notification> = serde_json::from_str(&body)?;
+        assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["open", "kept", "older"]);
+        let (_, body) = request(app.clone(), Method::GET, "/history").await;
+        let rows: Vec<Notification> = serde_json::from_str(&body)?;
+        assert_eq!(rows[0].id, "recent");
+        assert_eq!(rows[0].status, NotificationStatus::TimedOut);
+        assert!(rows[0].missed_dismissed_at.is_some());
+        let (_, body) = request(app.clone(), Method::GET, "/history?limit=2&before=kept").await;
+        let rows: Vec<Notification> = serde_json::from_str(&body)?;
+        assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["approved", "older"]);
+
+        let (status, body) = request(app, Method::GET, "/activity").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let activity: RequestActivity = serde_json::from_str(&body)?;
+        assert_eq!(activity.hours.len(), 24);
+        assert_eq!(activity.hours[0].start, activity.as_of - chrono::Duration::hours(24));
+        assert_eq!(activity.hours[23].count, 3);
+        assert_eq!(activity.hours[22].count, 2);
+        assert_eq!(activity.hours.iter().map(|hour| hour.count).sum::<i64>(), 5);
         Ok(())
     }
 

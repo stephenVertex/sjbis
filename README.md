@@ -858,6 +858,18 @@ them from the list and preserves `timed_out` in `sjbis status`.
 
 ### GET /state — full dashboard state (notifications + history + rules + agents)
 
+### GET /history — closed requests, newest first
+
+Use `?limit=50&before=<request-id>` to fetch the next page after a request
+in History. The native iPhone app expands requests inline and fetches signed
+TA grant details for answered approvals.
+
+### GET /activity — requests per hour
+
+Returns `as_of` and 24 chronological `hours` entries with `start` and `count`.
+Each bucket covers one hour by request creation time and includes all statuses.
+The native iPhone app displays these counts in **Activity**.
+
 ### POST /answer/{id} — submit answer
 
 ```bash
@@ -873,6 +885,13 @@ Returns `409` for a notification that is no longer open, and `409`
 ### POST /dismiss/{id} — mark as seen without answering
 
 No reply sent to the caller. Wakes up blocking waiters with empty answer.
+
+### POST /missed/clear — clear missed requests in bulk
+
+Send `{"ids":["sjbis-AbCdEfGh"]}`. The response returns newly cleared IDs
+in the same shape. Only missed requests are eligible, and their History
+entries retain `timed_out`. The native iPhone app uses this endpoint for
+**Queue → Missed while away → Clear All**.
 
 ### POST /snooze/{id} — push back by N minutes
 

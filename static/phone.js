@@ -228,6 +228,7 @@
       if (ev.event === 'notification_created' || ev.event === 'notification_updated') upsert(ev.notification);
       else if (ev.event === 'notification_timed_out') load();
       else if (ev.event === 'notification_missed_dismissed') { closeBanners(ev.id); load(); }
+      else if (ev.event === 'notifications_missed_cleared') { ev.ids.forEach(closeBanners); load(); }
       else if (ev.event === 'notification_answered') closedElsewhere(ev.envelope && ev.envelope.id, ev.envelope);
       else if (ev.event === 'notification_cancelled' || ev.event === 'notification_dismissed') closedElsewhere(ev.id, null);
     };

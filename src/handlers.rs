@@ -105,7 +105,7 @@ pub async fn get_state(
     expire_notifications(&state, None).await.map_err(db_err)?;
     let (notifications, missed) = state.db.list_notifications(true).await.map_err(db_err)?
         .into_iter().partition(|n| n.status == NotificationStatus::Open);
-    let history = state.db.list_history(50).await.map_err(db_err)?;
+    let history = state.db.list_history(50, None).await.map_err(db_err)?;
     let rules = state.db.list_rules().await.map_err(db_err)?;
     let agents_raw = state.db.list_source_summaries().await.map_err(db_err)?;
     let mut agents = HashMap::new();
@@ -434,6 +434,26 @@ pub async fn dismiss(
     Ok(Json(envelope))
 }
 
+/// POST /missed/clear — clear the supplied missed asks while retaining their history.
+pub async fn clear_missed(
+    State(state): State<AppState>,
+    Json(request): Json<MissedIds>,
+) -> Result<Json<MissedIds>, (StatusCode, Json<serde_json::Value>)> {
+    let ids = state.db.clear_missed(&request.ids).await.map_err(db_err)?;
+    if !ids.is_empty() {
+        state.broadcaster.broadcast(&SseEvent::NotificationsMissedCleared { ids: ids.clone() });
+    }
+    Ok(Json(MissedIds { ids }))
+}
+
+/// GET /activity — counts by creation time for the last 24 hours.
+pub async fn activity(
+    State(state): State<AppState>,
+) -> Result<Json<RequestActivity>, (StatusCode, Json<serde_json::Value>)> {
+    let activity = state.db.request_activity(Utc::now()).await.map_err(db_err)?;
+    Ok(Json(activity))
+}
+
 /// POST /snooze/:id — push notification back by N minutes (capped at deadline)
 #[derive(Deserialize)]
 pub struct SnoozeBody {
@@ -511,13 +531,14 @@ pub async fn get_notification(
 #[derive(Deserialize)]
 pub struct HistoryQuery {
     limit: Option<usize>,
+    before: Option<String>,
 }
 pub async fn history(
     State(state): State<AppState>,
     Query(q): Query<HistoryQuery>,
 ) -> Result<Json<Vec<Notification>>, (StatusCode, Json<serde_json::Value>)> {
     expire_notifications(&state, None).await.map_err(db_err)?;
-    let items = state.db.list_history(q.limit.unwrap_or(50)).await.map_err(db_err)?;
+    let items = state.db.list_history(q.limit.unwrap_or(50), q.before.as_deref()).await.map_err(db_err)?;
     Ok(Json(items))
 }
 

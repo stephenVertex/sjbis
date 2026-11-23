@@ -290,7 +290,7 @@
       try { ev = JSON.parse(e.data); } catch (_) { return; }
       if (ev.event === 'notification_created' || ev.event === 'notification_updated') upsert(ev.notification);
       else if (ev.event === 'notification_timed_out') load();
-      else if (ev.event === 'notification_missed_dismissed') load();
+      else if (ev.event === 'notification_missed_dismissed' || ev.event === 'notifications_missed_cleared') load();
       else if (ev.event === 'notification_answered') removeAsk(ev.envelope && ev.envelope.id);
       else if (ev.event === 'notification_cancelled' || ev.event === 'notification_dismissed') removeAsk(ev.id);
     };

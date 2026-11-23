@@ -42,6 +42,16 @@ struct ContentView: View {
                 Label("History", systemImage: "clock")
             }
             .tag(1)
+
+            NavigationStack {
+                ActivityView()
+                    .navigationTitle("Activity")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .tabItem {
+                Label("Activity", systemImage: "chart.bar.xaxis")
+            }
+            .tag(2)
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView()
